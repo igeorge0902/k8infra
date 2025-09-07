@@ -1,0 +1,282 @@
+# ================================================
+# MySQL Deployment + Service
+# ================================================
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: mysql
+spec:
+  selector:
+    matchLabels:
+      app: mysql
+  template:
+    metadata:
+      labels:
+        app: mysql
+    spec:
+      containers:
+        - name: mysql
+          image: mysql:8.0
+          env:
+            - name: MYSQL_DATABASE
+              value: login_
+            - name: MYSQL_USER
+              value: sqluser
+            - name: MYSQL_PASSWORD
+              value: sqluserpw
+            - name: MYSQL_ROOT_PASSWORD
+              value: rootpw
+          ports:
+            - containerPort: 3306
+          volumeMounts:
+            - name: mysql-init-volume
+              mountPath: /docker-entrypoint-initdb.d
+      volumes:
+        - name: mysql-init-volume
+          configMap:
+            name: mysql-config
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: mysql
+spec:
+  ports:
+    - port: 3306
+      targetPort: 3306
+  selector:
+    app: mysql
+
+---
+# ================================================
+# Zookeeper Deployment + Service
+# ================================================
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: zookeeper
+spec:
+  selector:
+    matchLabels:
+      app: zookeeper
+  template:
+    metadata:
+      labels:
+        app: zookeeper
+    spec:
+      containers:
+        - name: zookeeper
+          image: zookeeper:3.9
+          ports:
+            - containerPort: 2181
+          env:
+            - name: ZOO_STANDALONE_ENABLED
+              value: "true"
+            - name: ZOO_ADMINSERVER_ENABLED
+              value: "false"
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: zookeeper
+spec:
+  ports:
+    - port: 2181
+      targetPort: 2181
+  selector:
+    app: zookeeper
+
+---
+# ================================================
+# Kafka Deployment + Service
+# ================================================
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: kafka-config
+data:
+  server.properties: |
+    broker.id=1
+    listeners=PLAINTEXT://:9092
+    advertised.listeners=PLAINTEXT://kafka:9092
+    log.dirs=/var/lib/kafka/data
+    zookeeper.connect=zookeeper:2181
+    num.partitions=3
+    offsets.topic.replication.factor=1
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: kafka
+spec:
+  selector:
+    matchLabels:
+      app: kafka
+  template:
+    metadata:
+      labels:
+        app: kafka
+    spec:
+      containers:
+        - name: kafka
+          image: apache/kafka:3.9.0
+          ports:
+            - containerPort: 9092
+          command: ["/bin/sh","-c"]
+          args:
+            - exec /opt/kafka/bin/kafka-server-start.sh /opt/kafka/config/server.properties
+          volumeMounts:
+            - name: kafka-config
+              mountPath: /opt/kafka/config/server.properties
+              subPath: server.properties
+      volumes:
+        - name: kafka-config
+          configMap:
+            name: kafka-config
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: kafka
+spec:
+  ports:
+    - port: 9092
+      targetPort: 9092
+  selector:
+    app: kafka
+
+# ================================================
+# WildFly Deployment + Service (with initContainer)
+# ================================================
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: wildfly
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: wildfly
+  template:
+    metadata:
+      labels:
+        app: wildfly
+    spec:
+      initContainers:
+        - name: fetch-wars
+          image: alpine:3.20   # lightweight curl image
+          command:
+            - sh
+            - -c
+            - |
+              set -e
+              apk add --no-cache curl libxml2-utils
+              echo "Downloading WARs from GitHub Releases..."
+              LATEST_VERSION=$(curl -s -u igeorge0902:${GITHUB_TOKEN} https://maven.pkg.github.com/igeorge0902/Gateway/com/igeorge/book/mbook/maven-metadata.xml | xmllint --xpath "string(//metadata/versioning/latest)" -)
+              echo "Latest version is $LATEST_VERSION"
+              curl -L -u igeorge0902:${GITHUB_TOKEN} https://maven.pkg.github.com/igeorge0902/Gateway/com/igeorge/book/mbook/$LATEST_VERSION/mbook-$LATEST_VERSION.war -o /wars/mbook-1.war
+              LATEST_VERSION=$(curl -s -u igeorge0902:${GITHUB_TOKEN} https://maven.pkg.github.com/igeorge0902/Gateway/com/igeorge/book/mbooks/maven-metadata.xml | xmllint --xpath "string(//metadata/versioning/latest)" -)
+              echo "Latest version is $LATEST_VERSION"
+              curl -L -u igeorge0902:${GITHUB_TOKEN} https://maven.pkg.github.com/igeorge0902/Gateway/com/igeorge/book/mbooks/$LATEST_VERSION/mbooks-$LATEST_VERSION.war -o /wars/mbooks-1.war
+              LATEST_VERSION=$(curl -s -u igeorge0902:${GITHUB_TOKEN} https://maven.pkg.github.com/igeorge0902/Gateway/com/dalogin/dalogin/maven-metadata.xml | xmllint --xpath "string(//metadata/versioning/latest)" -)
+              echo "Latest version is $LATEST_VERSION"
+                curl -L -u igeorge0902:${GITHUB_TOKEN} https://maven.pkg.github.com/igeorge0902/Gateway/com/dalogin/dalogin/$LATEST_VERSION/dalogin-$LATEST_VERSION.war -o /wars/login.war
+              LATEST_VERSION=$(curl -s -u igeorge0902:${GITHUB_TOKEN} https://maven.pkg.github.com/igeorge0902/Gateway/com/igeorge/book/simple-service-webapp/maven-metadata.xml | xmllint --xpath "string(//metadata/versioning/latest)" -)
+              echo "Latest version is $LATEST_VERSION"
+              curl -L -u igeorge0902:${GITHUB_TOKEN} https://maven.pkg.github.com/igeorge0902/Gateway/com/igeorge/book/simple-service-webapp/$LATEST_VERSION/simple-service-webapp-$LATEST_VERSION.war -o /wars/simple-service-webapp.war
+          env:
+            - name: MBOOK_VERSION
+              value: "1.0.5"   # Flux/Action updates this
+            - name: GITHUB_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: github-token
+                  key: token
+          volumeMounts:
+            - name: war-volume
+              mountPath: /wars
+      containers:
+        - name: wildfly
+          image: quay.io/wildfly/wildfly:33.0.2.Final-jdk17
+          ports:
+            - containerPort: 8080
+            - containerPort: 9990
+            - containerPort: 8009
+          envFrom:
+            - secretRef:
+                name: db-credentials
+          env:
+            - name: JAVA_OPTS
+              value: "-Xms256m -Xmx512m -Djboss.bind.address=0.0.0.0 -Djboss.bind.address.management=0.0.0.0"
+          volumeMounts:
+            - name: war-volume
+              mountPath: /opt/jboss/wildfly/standalone/deployments
+      volumes:
+        - name: war-volume
+          emptyDir: {}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: wildfly
+spec:
+  # type: NodePort   # use LoadBalancer if on cloud
+  ports:
+    - name: http
+      port: 8080
+      targetPort: 8080
+     # nodePort: 30080
+    - name: management
+      port: 9990
+      targetPort: 9990
+     # nodePort: 30090
+    - name: ajp
+      port: 8009
+      targetPort: 8009
+  selector:
+    app: wildfly
+---
+# ================================================
+# Apache HTTPD Deployment + Service
+# ================================================
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: apache
+spec:
+  selector:
+    matchLabels:
+      app: apache
+  template:
+    metadata:
+      labels:
+        app: apache
+    spec:
+      containers:
+        - name: apache
+          image: httpd:2.4-alpine
+          ports:
+            - containerPort: 80
+          volumeMounts:
+            - name: apache-config
+              mountPath: /usr/local/apache2/conf/httpd.conf
+              subPath: httpd.conf
+      volumes:
+        - name: apache-config
+          configMap:
+            name: apache-config
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: apache
+spec:
+  type: NodePort
+  ports:
+    - port: 80
+      targetPort: 80
+      nodePort: 30080
+  selector:
+    app: apache
