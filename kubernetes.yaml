@@ -199,6 +199,12 @@ spec:
       containers:
         - name: wildfly
           image: quay.io/wildfly/wildfly:33.0.2.Final-jdk17
+          command:
+            - /bin/sh
+            - -c
+            - |
+              # Start WildFly
+              /opt/jboss/wildfly/bin/standalone.sh -b 0.0.0.0 -bmanagement 0.0.0.0
           ports:
             - containerPort: 8080
             - containerPort: 9990
@@ -273,10 +279,29 @@ kind: Service
 metadata:
   name: apache
 spec:
-  type: NodePort
+  type: ClusterIP
   ports:
     - port: 80
       targetPort: 80
-      nodePort: 30080
   selector:
     app: apache
+
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: apache-ingress
+  annotations:
+    nginx.ingress.kubernetes.io/rewrite-target: /
+spec:
+  rules:
+    - host: milo.crabdance.com
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: apache
+                port:
+                  number: 80
