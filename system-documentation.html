@@ -1,0 +1,1203 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Cinemas Platform — System Documentation</title>
+<style>
+  :root {
+    --bg: #0d1117; --surface: #161b22; --border: #30363d;
+    --text: #c9d1d9; --text-muted: #8b949e; --accent: #58a6ff;
+    --green: #3fb950; --red: #f85149; --orange: #d29922; --purple: #bc8cff;
+    --teal: #39d353; --pink: #f778ba;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif;
+         background: var(--bg); color: var(--text); line-height: 1.6; }
+  /* ── Layout ── */
+  .wrapper { display: flex; min-height: 100vh; }
+  nav { width: 280px; background: var(--surface); border-right: 1px solid var(--border);
+        padding: 24px 16px; position: fixed; top: 0; bottom: 0; overflow-y: auto; z-index: 10; }
+  main { margin-left: 280px; padding: 40px 48px; max-width: 1100px; flex: 1; }
+  /* ── Nav ── */
+  nav h2 { color: var(--accent); font-size: 16px; margin-bottom: 20px; letter-spacing: .5px; }
+  nav ul { list-style: none; }
+  nav li { margin-bottom: 2px; }
+  nav a { display: block; padding: 6px 12px; color: var(--text-muted); text-decoration: none;
+          border-radius: 6px; font-size: 14px; transition: all .15s; }
+  nav a:hover, nav a.active { background: rgba(88,166,255,.1); color: var(--accent); }
+  nav .section-title { font-size: 11px; text-transform: uppercase; letter-spacing: 1px;
+                        color: var(--text-muted); margin: 18px 0 6px 12px; }
+  /* ── Content ── */
+  section { margin-bottom: 56px; scroll-margin-top: 20px; }
+  h1 { font-size: 32px; margin-bottom: 8px; color: #fff; }
+  h1 small { font-size: 14px; color: var(--text-muted); font-weight: 400; }
+  h2 { font-size: 24px; margin-bottom: 16px; padding-bottom: 8px;
+       border-bottom: 1px solid var(--border); color: #fff; }
+  h3 { font-size: 18px; margin: 24px 0 12px; color: var(--accent); }
+  h4 { font-size: 15px; margin: 16px 0 8px; color: var(--purple); }
+  p, li { font-size: 15px; margin-bottom: 8px; }
+  ul, ol { padding-left: 24px; margin-bottom: 16px; }
+  a { color: var(--accent); }
+  code { background: rgba(110,118,129,.2); padding: 2px 6px; border-radius: 4px; font-size: 13px; }
+  pre { background: var(--surface); border: 1px solid var(--border); border-radius: 8px;
+        padding: 16px; overflow-x: auto; margin: 12px 0 20px; font-size: 13px; line-height: 1.5; }
+  pre code { background: none; padding: 0; }
+  /* ── Tables ── */
+  table { width: 100%; border-collapse: collapse; margin: 12px 0 24px; font-size: 14px; }
+  th, td { padding: 10px 14px; border: 1px solid var(--border); text-align: left; }
+  th { background: var(--surface); color: var(--accent); font-weight: 600; white-space: nowrap; }
+  tr:nth-child(even) td { background: rgba(22,27,34,.5); }
+  /* ── Badges ── */
+  .badge { display: inline-block; padding: 2px 10px; border-radius: 12px; font-size: 12px;
+           font-weight: 600; margin-right: 6px; }
+  .badge-blue   { background: rgba(88,166,255,.15); color: var(--accent); }
+  .badge-green  { background: rgba(63,185,80,.15); color: var(--green); }
+  .badge-orange { background: rgba(210,153,34,.15); color: var(--orange); }
+  .badge-red    { background: rgba(248,81,73,.15); color: var(--red); }
+  .badge-purple { background: rgba(188,140,255,.15); color: var(--purple); }
+  .badge-pink   { background: rgba(247,120,186,.15); color: var(--pink); }
+  /* ── Cards ── */
+  .card { background: var(--surface); border: 1px solid var(--border); border-radius: 8px;
+          padding: 20px; margin: 12px 0; }
+  .card h4 { margin-top: 0; }
+  .grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+  .grid-3 { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 16px; }
+  /* ── Diagrams (inline SVG placeholder → drawio links) ── */
+  .diagram-container { background: #fff; border-radius: 8px; padding: 20px; margin: 16px 0;
+                        overflow-x: auto; text-align: center; }
+  .diagram-container svg { max-width: 100%; height: auto; }
+  /* ── Refactoring priority ── */
+  .priority-high   { border-left: 4px solid var(--red); }
+  .priority-medium { border-left: 4px solid var(--orange); }
+  .priority-low    { border-left: 4px solid var(--green); }
+  /* ── Tabs ── */
+  .tabs { display: flex; gap: 0; margin-bottom: 0; border-bottom: 1px solid var(--border); }
+  .tab { padding: 8px 20px; cursor: pointer; color: var(--text-muted); border-bottom: 2px solid transparent;
+         font-size: 14px; transition: all .15s; }
+  .tab:hover { color: var(--text); }
+  .tab.active { color: var(--accent); border-bottom-color: var(--accent); }
+  .tab-content { display: none; padding: 20px 0; }
+  .tab-content.active { display: block; }
+  /* ── Responsive ── */
+  @media (max-width: 900px) {
+    nav { display: none; }
+    main { margin-left: 0; padding: 20px; }
+    .grid-2, .grid-3 { grid-template-columns: 1fr; }
+  }
+</style>
+</head>
+<body>
+<div class="wrapper">
+
+<!-- ═══════════ NAVIGATION ═══════════ -->
+<nav>
+  <h2>📽️ Cinemas Docs</h2>
+  <ul>
+    <li><a href="#overview">Overview</a></li>
+    <li class="section-title">Architecture</li>
+    <li><a href="#high-level">High-Level Architecture</a></li>
+    <li><a href="#request-flow">Request Flow</a></li>
+    <li><a href="#auth-flow">Authentication Flow</a></li>
+    <li><a href="#booking-flow">Booking &amp; Payment Flow</a></li>
+    <li><a href="#realtime">Realtime / Kafka + WebSocket</a></li>
+    <li class="section-title">Backend Services</li>
+    <li><a href="#svc-dalogin">dalogin-quarkus</a></li>
+    <li><a href="#svc-mbook">mbook-quarkus</a></li>
+    <li><a href="#svc-mbooks">mbooks-quarkus</a></li>
+    <li><a href="#svc-images">simple-service-webapp</a></li>
+    <li class="section-title">Database</li>
+    <li><a href="#db-login">Schema: login_</a></li>
+    <li><a href="#db-book">Schema: book</a></li>
+    <li><a href="#db-sprocs">Stored Procedures</a></li>
+    <li><a href="#db-triggers">Triggers</a></li>
+    <li class="section-title">Infrastructure</li>
+    <li><a href="#k8s">Kubernetes Topology</a></li>
+    <li><a href="#deploy">Deploy Runbook</a></li>
+    <li class="section-title">Analysis</li>
+    <li><a href="#refactoring">Refactoring Suggestions</a></li>
+    <li><a href="#api-reference">API Reference</a></li>
+  </ul>
+</nav>
+
+<!-- ═══════════ MAIN CONTENT ═══════════ -->
+<main>
+
+<!-- ──────── OVERVIEW ──────── -->
+<section id="overview">
+<h1>Cinemas Platform <small>System Documentation — March 2026</small></h1>
+<p>A full-stack cinema booking platform consisting of four Quarkus microservices, two MySQL schemas, Kafka-based realtime broadcasting, and iOS / AngularJS clients.</p>
+
+<div class="grid-3">
+  <div class="card">
+    <h4>🔐 dalogin</h4>
+    <p>Auth gateway — login, registration, session management, HMAC handshake, XSRF tokens.</p>
+    <span class="badge badge-blue">Port 8080</span><span class="badge badge-blue">/login</span>
+  </div>
+  <div class="card">
+    <h4>👤 mbook</h4>
+    <p>User/device API — user profiles, device tracking, news events, Kafka consumer for user notifications.</p>
+    <span class="badge badge-green">Port 8888</span><span class="badge badge-green">/mbook-1</span>
+  </div>
+  <div class="card">
+    <h4>🎬 mbooks</h4>
+    <p>Movie/booking/payment API — movie catalog, seat reservation, Braintree payments, purchase history.</p>
+    <span class="badge badge-orange">Port 8080</span><span class="badge badge-orange">/mbooks-1</span>
+  </div>
+</div>
+<div class="grid-3">
+  <div class="card">
+    <h4>🖼️ simple-service-webapp</h4>
+    <p>Image serving — movie posters, venue photos, profile pictures from filesystem.</p>
+    <span class="badge badge-purple">Port 8085</span><span class="badge badge-purple">/simple-service-webapp</span>
+  </div>
+  <div class="card">
+    <h4>🗄️ MySQL 8</h4>
+    <p>Two schemas: <code>login_</code> (auth/devices/tokens) and <code>book</code> (movies/venues/tickets/payments).</p>
+    <span class="badge badge-red">Port 3306</span>
+  </div>
+  <div class="card">
+    <h4>📡 Kafka + ZooKeeper</h4>
+    <p>Event streaming for real-time user &amp; movie notifications via WebSocket broadcast.</p>
+    <span class="badge badge-pink">Port 9092</span>
+  </div>
+</div>
+</section>
+
+<!-- ──────── HIGH-LEVEL ARCHITECTURE ──────── -->
+<section id="high-level">
+<h2>High-Level Architecture</h2>
+<div class="diagram-container">
+<!-- Draw.io XML embedded as editable SVG-style diagram -->
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 960 620" font-family="Arial,sans-serif" font-size="13">
+  <!-- Background -->
+  <rect width="960" height="620" fill="#f8f9fa" rx="12"/>
+
+  <!-- Clients -->
+  <rect x="20" y="20" width="160" height="60" rx="8" fill="#e3f2fd" stroke="#1976d2" stroke-width="2"/>
+  <text x="100" y="45" text-anchor="middle" fill="#1976d2" font-weight="bold" font-size="14">📱 iOS Client</text>
+  <text x="100" y="62" text-anchor="middle" fill="#555" font-size="11">SwiftUI + URLSession</text>
+
+  <rect x="200" y="20" width="160" height="60" rx="8" fill="#e3f2fd" stroke="#1976d2" stroke-width="2"/>
+  <text x="280" y="45" text-anchor="middle" fill="#1976d2" font-weight="bold" font-size="14">🌐 Web Client</text>
+  <text x="280" y="62" text-anchor="middle" fill="#555" font-size="11">AngularJS 1.x</text>
+
+  <!-- Ingress -->
+  <rect x="100" y="110" width="200" height="40" rx="6" fill="#fff3e0" stroke="#e65100" stroke-width="2"/>
+  <text x="200" y="135" text-anchor="middle" fill="#e65100" font-weight="bold">NGINX Ingress (TLS)</text>
+  <line x1="100" y1="80" x2="200" y2="110" stroke="#999" stroke-width="1.5" marker-end="url(#arrow)"/>
+  <line x1="280" y1="80" x2="200" y2="110" stroke="#999" stroke-width="1.5" marker-end="url(#arrow)"/>
+
+  <!-- Apache -->
+  <rect x="100" y="180" width="200" height="40" rx="6" fill="#fce4ec" stroke="#c62828" stroke-width="2"/>
+  <text x="200" y="205" text-anchor="middle" fill="#c62828" font-weight="bold">Apache Reverse Proxy</text>
+  <line x1="200" y1="150" x2="200" y2="180" stroke="#999" stroke-width="1.5" marker-end="url(#arrow)"/>
+
+  <!-- K8s boundary -->
+  <rect x="10" y="240" width="940" height="370" rx="10" fill="none" stroke="#30363d" stroke-width="2" stroke-dasharray="8 4"/>
+  <text x="30" y="260" fill="#8b949e" font-size="11" font-weight="bold">KUBERNETES NAMESPACE: cinemas</text>
+
+  <!-- Services -->
+  <rect x="30" y="280" width="190" height="80" rx="8" fill="#e8f5e9" stroke="#2e7d32" stroke-width="2"/>
+  <text x="125" y="305" text-anchor="middle" fill="#2e7d32" font-weight="bold" font-size="14">dalogin-quarkus</text>
+  <text x="125" y="322" text-anchor="middle" fill="#555" font-size="11">Auth / Session / HMAC</text>
+  <text x="125" y="340" text-anchor="middle" fill="#888" font-size="10">:8080 → /login</text>
+
+  <rect x="250" y="280" width="190" height="80" rx="8" fill="#f3e5f5" stroke="#7b1fa2" stroke-width="2"/>
+  <text x="345" y="305" text-anchor="middle" fill="#7b1fa2" font-weight="bold" font-size="14">mbook-quarkus</text>
+  <text x="345" y="322" text-anchor="middle" fill="#555" font-size="11">User / Device / News</text>
+  <text x="345" y="340" text-anchor="middle" fill="#888" font-size="10">:8888 → /mbook-1</text>
+
+  <rect x="470" y="280" width="190" height="80" rx="8" fill="#fff8e1" stroke="#f57f17" stroke-width="2"/>
+  <text x="565" y="305" text-anchor="middle" fill="#f57f17" font-weight="bold" font-size="14">mbooks-quarkus</text>
+  <text x="565" y="322" text-anchor="middle" fill="#555" font-size="11">Movies / Booking / Pay</text>
+  <text x="565" y="340" text-anchor="middle" fill="#888" font-size="10">:8080 → /mbooks-1</text>
+
+  <rect x="690" y="280" width="240" height="80" rx="8" fill="#e0f7fa" stroke="#00838f" stroke-width="2"/>
+  <text x="810" y="305" text-anchor="middle" fill="#00838f" font-weight="bold" font-size="14">simple-service-webapp</text>
+  <text x="810" y="322" text-anchor="middle" fill="#555" font-size="11">Image Server (pictures/)</text>
+  <text x="810" y="340" text-anchor="middle" fill="#888" font-size="10">:8085 → /simple-service-webapp</text>
+
+  <!-- Apache to services -->
+  <line x1="150" y1="220" x2="125" y2="280" stroke="#c62828" stroke-width="1.5" marker-end="url(#arrow)"/>
+  <line x1="200" y1="220" x2="345" y2="280" stroke="#c62828" stroke-width="1.5" marker-end="url(#arrow)"/>
+  <line x1="250" y1="220" x2="565" y2="280" stroke="#c62828" stroke-width="1.5" marker-end="url(#arrow)"/>
+  <line x1="280" y1="220" x2="810" y2="280" stroke="#c62828" stroke-width="1.5" marker-end="url(#arrow)"/>
+
+  <!-- dalogin → mbook (ServiceClient) -->
+  <line x1="220" y1="320" x2="250" y2="320" stroke="#2e7d32" stroke-width="2" stroke-dasharray="5 3" marker-end="url(#arrow)"/>
+  <text x="235" y="312" text-anchor="middle" fill="#2e7d32" font-size="9">ServiceClient</text>
+
+  <!-- Databases -->
+  <rect x="80" y="400" width="200" height="60" rx="8" fill="#fce4ec" stroke="#c62828" stroke-width="2"/>
+  <text x="180" y="425" text-anchor="middle" fill="#c62828" font-weight="bold">MySQL: login_</text>
+  <text x="180" y="442" text-anchor="middle" fill="#555" font-size="11">auth, devices, tokens, vouchers</text>
+
+  <rect x="370" y="400" width="200" height="60" rx="8" fill="#fff3e0" stroke="#e65100" stroke-width="2"/>
+  <text x="470" y="425" text-anchor="middle" fill="#e65100" font-weight="bold">MySQL: book</text>
+  <text x="470" y="442" text-anchor="middle" fill="#555" font-size="11">movies, venues, tickets, purchases</text>
+
+  <!-- Service to DB -->
+  <line x1="125" y1="360" x2="180" y2="400" stroke="#999" stroke-width="1.5" marker-end="url(#arrow)"/>
+  <line x1="345" y1="360" x2="180" y2="400" stroke="#999" stroke-width="1.5" marker-end="url(#arrow)"/>
+  <line x1="565" y1="360" x2="470" y2="400" stroke="#999" stroke-width="1.5" marker-end="url(#arrow)"/>
+
+  <!-- Kafka -->
+  <rect x="660" y="400" width="160" height="60" rx="8" fill="#ede7f6" stroke="#4a148c" stroke-width="2"/>
+  <text x="740" y="425" text-anchor="middle" fill="#4a148c" font-weight="bold">Apache Kafka</text>
+  <text x="740" y="442" text-anchor="middle" fill="#555" font-size="11">ios-*-notifications</text>
+
+  <rect x="840" y="400" width="100" height="60" rx="8" fill="#f3e5f5" stroke="#7b1fa2" stroke-width="1.5"/>
+  <text x="890" y="430" text-anchor="middle" fill="#7b1fa2" font-weight="bold" font-size="12">ZooKeeper</text>
+
+  <!-- Kafka connections -->
+  <line x1="345" y1="360" x2="740" y2="400" stroke="#4a148c" stroke-width="1.5" stroke-dasharray="5 3" marker-end="url(#arrow)"/>
+  <line x1="565" y1="360" x2="740" y2="400" stroke="#4a148c" stroke-width="1.5" stroke-dasharray="5 3" marker-end="url(#arrow)"/>
+
+  <!-- Pictures volume -->
+  <rect x="720" y="380" width="140" height="30" rx="6" fill="#e0f7fa" stroke="#00838f" stroke-width="1"/>
+  <text x="790" y="399" text-anchor="middle" fill="#00838f" font-size="10">📁 /pictures PVC</text>
+  <line x1="810" y1="360" x2="790" y2="380" stroke="#00838f" stroke-width="1" marker-end="url(#arrow)"/>
+
+  <!-- WebSocket labels -->
+  <text x="345" y="375" text-anchor="middle" fill="#7b1fa2" font-size="10">🔌 /ws</text>
+  <text x="565" y="375" text-anchor="middle" fill="#f57f17" font-size="10">🔌 /ws</text>
+
+  <!-- Braintree -->
+  <rect x="470" y="500" width="190" height="50" rx="8" fill="#e8eaf6" stroke="#283593" stroke-width="2"/>
+  <text x="565" y="525" text-anchor="middle" fill="#283593" font-weight="bold">Braintree (Sandbox)</text>
+  <text x="565" y="540" text-anchor="middle" fill="#555" font-size="10">Payment Gateway</text>
+  <line x1="565" y1="460" x2="565" y2="500" stroke="#283593" stroke-width="1.5" stroke-dasharray="5 3" marker-end="url(#arrow)"/>
+
+  <!-- Arrow marker -->
+  <defs>
+    <marker id="arrow" markerWidth="8" markerHeight="6" refX="8" refY="3" orient="auto">
+      <path d="M0,0 L8,3 L0,6 Z" fill="#999"/>
+    </marker>
+  </defs>
+</svg>
+</div>
+</section>
+
+<!-- ──────── REQUEST FLOW ──────── -->
+<section id="request-flow">
+<h2>Request Flow</h2>
+<div class="diagram-container">
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 900 260" font-family="Arial,sans-serif" font-size="12">
+  <rect width="900" height="260" fill="#f8f9fa" rx="8"/>
+  <defs><marker id="a2" markerWidth="8" markerHeight="6" refX="8" refY="3" orient="auto"><path d="M0,0 L8,3 L0,6 Z" fill="#666"/></marker></defs>
+
+  <!-- Actors -->
+  <rect x="20" y="40" width="100" height="40" rx="6" fill="#e3f2fd" stroke="#1976d2" stroke-width="2"/>
+  <text x="70" y="64" text-anchor="middle" fill="#1976d2" font-weight="bold">iOS / Web</text>
+
+  <rect x="170" y="40" width="120" height="40" rx="6" fill="#fff3e0" stroke="#e65100" stroke-width="2"/>
+  <text x="230" y="64" text-anchor="middle" fill="#e65100" font-weight="bold">NGINX Ingress</text>
+
+  <rect x="340" y="40" width="100" height="40" rx="6" fill="#fce4ec" stroke="#c62828" stroke-width="2"/>
+  <text x="390" y="64" text-anchor="middle" fill="#c62828" font-weight="bold">Apache</text>
+
+  <rect x="490" y="20" width="100" height="40" rx="6" fill="#e8f5e9" stroke="#2e7d32" stroke-width="2"/>
+  <text x="540" y="44" text-anchor="middle" fill="#2e7d32" font-weight="bold">dalogin</text>
+
+  <rect x="490" y="70" width="100" height="40" rx="6" fill="#f3e5f5" stroke="#7b1fa2" stroke-width="2"/>
+  <text x="540" y="94" text-anchor="middle" fill="#7b1fa2" font-weight="bold">mbook</text>
+
+  <rect x="490" y="120" width="100" height="40" rx="6" fill="#fff8e1" stroke="#f57f17" stroke-width="2"/>
+  <text x="540" y="144" text-anchor="middle" fill="#f57f17" font-weight="bold">mbooks</text>
+
+  <rect x="490" y="170" width="140" height="40" rx="6" fill="#e0f7fa" stroke="#00838f" stroke-width="2"/>
+  <text x="560" y="194" text-anchor="middle" fill="#00838f" font-weight="bold">image-service</text>
+
+  <!-- Arrows -->
+  <line x1="120" y1="60" x2="168" y2="60" stroke="#666" stroke-width="1.5" marker-end="url(#a2)"/>
+  <text x="144" y="54" text-anchor="middle" fill="#999" font-size="9">HTTPS</text>
+
+  <line x1="290" y1="60" x2="338" y2="60" stroke="#666" stroke-width="1.5" marker-end="url(#a2)"/>
+  <text x="314" y="54" text-anchor="middle" fill="#999" font-size="9">HTTP</text>
+
+  <line x1="440" y1="50" x2="488" y2="40" stroke="#666" stroke-width="1.5" marker-end="url(#a2)"/>
+  <text x="464" y="38" text-anchor="middle" fill="#999" font-size="9">/login</text>
+
+  <line x1="440" y1="60" x2="488" y2="90" stroke="#666" stroke-width="1.5" marker-end="url(#a2)"/>
+  <text x="458" y="82" text-anchor="middle" fill="#999" font-size="9">/mbook-1</text>
+
+  <line x1="440" y1="65" x2="488" y2="140" stroke="#666" stroke-width="1.5" marker-end="url(#a2)"/>
+  <text x="450" y="112" text-anchor="middle" fill="#999" font-size="9">/mbooks-1</text>
+
+  <line x1="440" y1="70" x2="488" y2="190" stroke="#666" stroke-width="1.5" marker-end="url(#a2)"/>
+
+  <!-- Inter-service -->
+  <line x1="540" y1="60" x2="540" y2="70" stroke="#2e7d32" stroke-width="2" stroke-dasharray="4 2" marker-end="url(#a2)"/>
+  <text x="570" y="68" fill="#2e7d32" font-size="9">ServiceClient</text>
+
+  <!-- Legend -->
+  <rect x="670" y="30" width="210" height="100" rx="6" fill="#fff" stroke="#ddd"/>
+  <text x="680" y="50" fill="#333" font-weight="bold" font-size="11">Route Mapping</text>
+  <text x="680" y="68" fill="#555" font-size="10">/login → dalogin:8080</text>
+  <text x="680" y="82" fill="#555" font-size="10">/mbook-1 → mbook:8888</text>
+  <text x="680" y="96" fill="#555" font-size="10">/mbooks-1 → mbooks:8080</text>
+  <text x="680" y="110" fill="#555" font-size="10">/simple-service-webapp → images:8085</text>
+  <text x="680" y="124" fill="#555" font-size="10">/*/ws → WebSocket upgrade</text>
+</svg>
+</div>
+</section>
+
+<!-- ──────── AUTH FLOW ──────── -->
+<section id="auth-flow">
+<h2>Authentication Flow</h2>
+<div class="diagram-container">
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 900 500" font-family="Arial,sans-serif" font-size="12">
+  <rect width="900" height="500" fill="#f8f9fa" rx="8"/>
+  <defs><marker id="a3" markerWidth="8" markerHeight="6" refX="8" refY="3" orient="auto"><path d="M0,0 L8,3 L0,6 Z" fill="#666"/></marker></defs>
+
+  <!-- Swim lanes -->
+  <text x="80" y="25" text-anchor="middle" fill="#1976d2" font-weight="bold" font-size="14">Client</text>
+  <text x="280" y="25" text-anchor="middle" fill="#2e7d32" font-weight="bold" font-size="14">dalogin</text>
+  <text x="500" y="25" text-anchor="middle" fill="#c62828" font-weight="bold" font-size="14">MySQL login_</text>
+  <text x="720" y="25" text-anchor="middle" fill="#7b1fa2" font-weight="bold" font-size="14">mbook</text>
+
+  <line x1="80" y1="35" x2="80" y2="490" stroke="#1976d2" stroke-width="1" stroke-dasharray="4 2"/>
+  <line x1="280" y1="35" x2="280" y2="490" stroke="#2e7d32" stroke-width="1" stroke-dasharray="4 2"/>
+  <line x1="500" y1="35" x2="500" y2="490" stroke="#c62828" stroke-width="1" stroke-dasharray="4 2"/>
+  <line x1="720" y1="35" x2="720" y2="490" stroke="#7b1fa2" stroke-width="1" stroke-dasharray="4 2"/>
+
+  <!-- Step 1: HMAC Login -->
+  <rect x="20" y="50" width="120" height="35" rx="4" fill="#e3f2fd" stroke="#1976d2"/>
+  <text x="80" y="72" text-anchor="middle" fill="#1976d2" font-size="11">Compute HMAC-512</text>
+  <line x1="140" y1="68" x2="220" y2="88" stroke="#666" stroke-width="1.5" marker-end="url(#a3)"/>
+  <text x="180" y="80" text-anchor="middle" fill="#666" font-size="9">POST /login/HelloWorld</text>
+
+  <rect x="220" y="90" width="120" height="35" rx="4" fill="#e8f5e9" stroke="#2e7d32"/>
+  <text x="280" y="107" text-anchor="middle" fill="#2e7d32" font-size="11">Verify HMAC</text>
+  <text x="280" y="120" text-anchor="middle" fill="#2e7d32" font-size="9">HelloWorld.doPost()</text>
+
+  <!-- Step 2: Hash lookup -->
+  <line x1="340" y1="108" x2="440" y2="138" stroke="#666" stroke-width="1.5" marker-end="url(#a3)"/>
+  <text x="390" y="126" text-anchor="middle" fill="#666" font-size="9">CALL get_hash()</text>
+
+  <rect x="440" y="140" width="120" height="30" rx="4" fill="#fce4ec" stroke="#c62828"/>
+  <text x="500" y="159" text-anchor="middle" fill="#c62828" font-size="11">Verify password</text>
+
+  <line x1="440" y1="155" x2="340" y2="185" stroke="#666" stroke-width="1.5" marker-end="url(#a3)"/>
+  <text x="390" y="172" text-anchor="middle" fill="#999" font-size="9">hash match ✓</text>
+
+  <!-- Step 3: Create session -->
+  <rect x="220" y="190" width="120" height="45" rx="4" fill="#e8f5e9" stroke="#2e7d32"/>
+  <text x="280" y="208" text-anchor="middle" fill="#2e7d32" font-size="11">Create Session</text>
+  <text x="280" y="222" text-anchor="middle" fill="#555" font-size="9">insert_device_() +</text>
+  <text x="280" y="232" text-anchor="middle" fill="#555" font-size="9">insert_sessionCreated()</text>
+
+  <line x1="340" y1="212" x2="440" y2="232" stroke="#666" stroke-width="1.5" marker-end="url(#a3)"/>
+  <line x1="440" y1="245" x2="340" y2="265" stroke="#666" stroke-width="1.5" marker-end="url(#a3)"/>
+  <text x="390" y="260" text-anchor="middle" fill="#999" font-size="9">token1, token2, TIME_</text>
+
+  <!-- Step 4: Build XSRF -->
+  <rect x="220" y="270" width="120" height="40" rx="4" fill="#e8f5e9" stroke="#2e7d32"/>
+  <text x="280" y="288" text-anchor="middle" fill="#2e7d32" font-size="11">Build XSRF-TOKEN</text>
+  <text x="280" y="302" text-anchor="middle" fill="#555" font-size="9">AES(SALT,IV,TIME_,token2)</text>
+
+  <!-- Step 5: Return -->
+  <line x1="220" y1="295" x2="140" y2="325" stroke="#666" stroke-width="1.5" marker-end="url(#a3)"/>
+  <rect x="15" y="325" width="130" height="45" rx="4" fill="#e3f2fd" stroke="#1976d2"/>
+  <text x="80" y="343" text-anchor="middle" fill="#1976d2" font-size="10">Receives: JSESSIONID</text>
+  <text x="80" y="355" text-anchor="middle" fill="#1976d2" font-size="10">X-Token, XSRF-TOKEN</text>
+  <text x="80" y="367" text-anchor="middle" fill="#1976d2" font-size="9">(cookies + JSON body)</text>
+
+  <!-- Step 6: Admin call -->
+  <line x1="140" y1="370" x2="220" y2="390" stroke="#666" stroke-width="1.5" marker-end="url(#a3)"/>
+  <text x="180" y="382" text-anchor="middle" fill="#666" font-size="9">GET /login/admin</text>
+
+  <rect x="220" y="390" width="120" height="40" rx="4" fill="#e8f5e9" stroke="#2e7d32"/>
+  <text x="280" y="408" text-anchor="middle" fill="#2e7d32" font-size="11">AuthFilter → Admin</text>
+  <text x="280" y="422" text-anchor="middle" fill="#555" font-size="9">Validate XSRF cookie</text>
+
+  <!-- Step 7: ServiceClient → mbook -->
+  <line x1="340" y1="410" x2="660" y2="430" stroke="#2e7d32" stroke-width="1.5" stroke-dasharray="5 3" marker-end="url(#a3)"/>
+  <text x="500" y="416" text-anchor="middle" fill="#2e7d32" font-size="9">ServiceClient → GET /rest/user/{user}/{token1}</text>
+
+  <rect x="660" y="430" width="120" height="40" rx="4" fill="#f3e5f5" stroke="#7b1fa2"/>
+  <text x="720" y="448" text-anchor="middle" fill="#7b1fa2" font-size="11">CiphertextFilter</text>
+  <text x="720" y="462" text-anchor="middle" fill="#555" font-size="9">CookieFilter → DAO</text>
+
+  <line x1="660" y1="450" x2="340" y2="460" stroke="#666" stroke-width="1.5" marker-end="url(#a3)"/>
+  <text x="500" y="462" text-anchor="middle" fill="#999" font-size="9">{uuid, user, email} JSON</text>
+
+  <line x1="220" y1="465" x2="140" y2="480" stroke="#666" stroke-width="1.5" marker-end="url(#a3)"/>
+  <rect x="20" y="475" width="120" height="20" rx="4" fill="#e8f5e9" stroke="#2e7d32"/>
+  <text x="80" y="489" text-anchor="middle" fill="#2e7d32" font-size="10">✅ User data</text>
+</svg>
+</div>
+
+<h3>Key Security Tokens</h3>
+<table>
+  <tr><th>Token</th><th>Where Created</th><th>Purpose</th></tr>
+  <tr><td><code>X-HMAC-HASH</code></td><td>Client (iOS/Web)</td><td>HMAC-SHA512 of request body + timestamp + content-length. Proves client knows the password hash without sending it in plaintext.</td></tr>
+  <tr><td><code>JSESSIONID</code></td><td>dalogin (Undertow)</td><td>HTTP session identifier. Sent as cookie and in JSON response body.</td></tr>
+  <tr><td><code>X-Token</code> / <code>token2</code></td><td>MySQL trigger on <code>Tokens</code> table</td><td>Random token generated on device login. Used for inter-service auth (Ciphertext header).</td></tr>
+  <tr><td><code>XSRF-TOKEN</code></td><td>dalogin <code>HelloWorld</code></td><td>AES-encrypted combination of <code>TIME_</code> + <code>token2</code>. Verified by <code>AuthFilter</code> and <code>CookieFilter</code>.</td></tr>
+  <tr><td><code>Ciphertext</code></td><td>Client (copies X-Token)</td><td>Must equal <code>token2</code> header forwarded by <code>RequestFilter</code>. Verified by mbook's <code>CiphertextFilter</code>.</td></tr>
+</table>
+</section>
+
+<!-- ──────── BOOKING FLOW ──────── -->
+<section id="booking-flow">
+<h2>Booking &amp; Payment Flow</h2>
+<div class="diagram-container">
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 800 380" font-family="Arial,sans-serif" font-size="12">
+  <rect width="800" height="380" fill="#f8f9fa" rx="8"/>
+  <defs><marker id="a4" markerWidth="8" markerHeight="6" refX="8" refY="3" orient="auto"><path d="M0,0 L8,3 L0,6 Z" fill="#666"/></marker></defs>
+
+  <!-- Steps -->
+  <rect x="20" y="20" width="160" height="50" rx="8" fill="#e3f2fd" stroke="#1976d2" stroke-width="2"/>
+  <text x="100" y="40" text-anchor="middle" fill="#1976d2" font-weight="bold">1. Browse Movies</text>
+  <text x="100" y="55" text-anchor="middle" fill="#555" font-size="10">GET /book/movies</text>
+
+  <rect x="210" y="20" width="160" height="50" rx="8" fill="#e3f2fd" stroke="#1976d2" stroke-width="2"/>
+  <text x="290" y="40" text-anchor="middle" fill="#1976d2" font-weight="bold">2. Select Screening</text>
+  <text x="290" y="55" text-anchor="middle" fill="#555" font-size="10">GET /book/venues/{id}</text>
+
+  <rect x="400" y="20" width="170" height="50" rx="8" fill="#e3f2fd" stroke="#1976d2" stroke-width="2"/>
+  <text x="485" y="40" text-anchor="middle" fill="#1976d2" font-weight="bold">3. Pick Seats</text>
+  <text x="485" y="55" text-anchor="middle" fill="#555" font-size="10">GET /book/seats/{screenId}</text>
+
+  <rect x="600" y="20" width="170" height="50" rx="8" fill="#fff3e0" stroke="#e65100" stroke-width="2"/>
+  <text x="685" y="40" text-anchor="middle" fill="#e65100" font-weight="bold">4. Get Client Token</text>
+  <text x="685" y="55" text-anchor="middle" fill="#555" font-size="10">GET /book/payment/clientToken</text>
+
+  <line x1="180" y1="45" x2="208" y2="45" stroke="#666" marker-end="url(#a4)"/>
+  <line x1="370" y1="45" x2="398" y2="45" stroke="#666" marker-end="url(#a4)"/>
+  <line x1="570" y1="45" x2="598" y2="45" stroke="#666" marker-end="url(#a4)"/>
+
+  <!-- Checkout -->
+  <rect x="200" y="110" width="380" height="70" rx="8" fill="#e8f5e9" stroke="#2e7d32" stroke-width="2"/>
+  <text x="390" y="135" text-anchor="middle" fill="#2e7d32" font-weight="bold" font-size="14">5. Full Checkout</text>
+  <text x="390" y="152" text-anchor="middle" fill="#555" font-size="11">POST /book/payment/fullcheckout2</text>
+  <text x="390" y="168" text-anchor="middle" fill="#555" font-size="10">Body: orderId, seatsToBeReserved (JSON), payment_method_nonce</text>
+
+  <line x1="390" y1="70" x2="390" y2="108" stroke="#666" marker-end="url(#a4)"/>
+
+  <!-- Sub-steps -->
+  <rect x="40" y="210" width="160" height="45" rx="6" fill="#f3e5f5" stroke="#7b1fa2"/>
+  <text x="120" y="230" text-anchor="middle" fill="#7b1fa2" font-weight="bold" font-size="11">5a. Reserve Tickets</text>
+  <text x="120" y="245" text-anchor="middle" fill="#555" font-size="9">TicketService → lock seats</text>
+
+  <rect x="230" y="210" width="160" height="45" rx="6" fill="#e8eaf6" stroke="#283593"/>
+  <text x="310" y="230" text-anchor="middle" fill="#283593" font-weight="bold" font-size="11">5b. Braintree Txn</text>
+  <text x="310" y="245" text-anchor="middle" fill="#555" font-size="9">PaymentService → sale()</text>
+
+  <rect x="420" y="210" width="160" height="45" rx="6" fill="#fff8e1" stroke="#f57f17"/>
+  <text x="500" y="230" text-anchor="middle" fill="#f57f17" font-weight="bold" font-size="11">5c. Record Purchase</text>
+  <text x="500" y="245" text-anchor="middle" fill="#555" font-size="9">PurchaseDAO → persist</text>
+
+  <rect x="610" y="210" width="160" height="45" rx="6" fill="#e0f7fa" stroke="#00838f"/>
+  <text x="690" y="230" text-anchor="middle" fill="#00838f" font-weight="bold" font-size="11">5d. Kafka Notify</text>
+  <text x="690" y="245" text-anchor="middle" fill="#555" font-size="9">KafkaProducer → topic</text>
+
+  <line x1="390" y1="180" x2="120" y2="208" stroke="#666" marker-end="url(#a4)"/>
+  <line x1="390" y1="180" x2="310" y2="208" stroke="#666" marker-end="url(#a4)"/>
+  <line x1="390" y1="180" x2="500" y2="208" stroke="#666" marker-end="url(#a4)"/>
+  <line x1="390" y1="180" x2="690" y2="208" stroke="#666" marker-end="url(#a4)"/>
+
+  <!-- Rollback -->
+  <rect x="40" y="290" width="200" height="40" rx="6" fill="#fce4ec" stroke="#c62828"/>
+  <text x="140" y="310" text-anchor="middle" fill="#c62828" font-weight="bold" font-size="11">On Failure → Rollback</text>
+  <text x="140" y="324" text-anchor="middle" fill="#555" font-size="9">ticketService.rollbackTickets()</text>
+
+  <rect x="280" y="290" width="260" height="40" rx="6" fill="#e8f5e9" stroke="#2e7d32"/>
+  <text x="410" y="310" text-anchor="middle" fill="#2e7d32" font-weight="bold" font-size="11">On Success → Response</text>
+  <text x="410" y="324" text-anchor="middle" fill="#555" font-size="9">{AuthCode, Status, Amount, tickets, seatsforscreen}</text>
+
+  <!-- Kafka → WS -->
+  <rect x="600" y="290" width="170" height="50" rx="6" fill="#ede7f6" stroke="#4a148c"/>
+  <text x="685" y="310" text-anchor="middle" fill="#4a148c" font-weight="bold" font-size="11">Kafka → WebSocket</text>
+  <text x="685" y="326" text-anchor="middle" fill="#555" font-size="9">KafkaListener → broadcastMessage()</text>
+  <text x="685" y="338" text-anchor="middle" fill="#555" font-size="9">→ all connected clients</text>
+  <line x1="690" y1="255" x2="690" y2="288" stroke="#4a148c" stroke-width="1.5" marker-end="url(#a4)"/>
+</svg>
+</div>
+</section>
+
+<!-- ──────── REALTIME ──────── -->
+<section id="realtime">
+<h2>Realtime / Kafka + WebSocket</h2>
+<table>
+  <tr><th>Topic</th><th>Producer</th><th>Consumer</th><th>Purpose</th></tr>
+  <tr><td><code>ios-users-notifications</code></td><td>mbook KafkaMessageProducer</td><td>mbook KafkaListener → WebSocketServer</td><td>User state changes (login, profile update)</td></tr>
+  <tr><td><code>ios-movies-notifications2</code></td><td>mbooks KafkaMessageProducer</td><td>mbook KafkaMoviesListener → WebSocketServer</td><td>Movie catalog changes, new screenings</td></tr>
+</table>
+<p>Both WebSocket servers expose <code>@ServerEndpoint("/ws")</code>. Apache proxies WebSocket upgrades at <code>/mbook-1/ws</code> and <code>/mbooks-1/ws</code>.</p>
+</section>
+
+<!-- ──────── SERVICE: dalogin ──────── -->
+<section id="svc-dalogin">
+<h2>Service: dalogin-quarkus</h2>
+<p><span class="badge badge-blue">Port 8080</span> <span class="badge badge-blue">Context /login</span> <span class="badge badge-blue">DB: login_</span></p>
+
+<h3>Servlets</h3>
+<table>
+  <tr><th>Servlet</th><th>URL Pattern</th><th>Method</th><th>Purpose</th></tr>
+  <tr><td>HelloWorld</td><td>/HelloWorld</td><td>POST</td><td>Login — HMAC verification, session creation, token generation</td></tr>
+  <tr><td>AdminServlet</td><td>/admin</td><td>GET/POST</td><td>Retrieve user profile via ServiceClient → mbook</td></tr>
+  <tr><td>Registration</td><td>/Registration</td><td>POST</td><td>Register new user with voucher</td></tr>
+  <tr><td>RegistrationWithoutVoucher</td><td>/RegistrationWithoutVoucher</td><td>POST</td><td>Register without voucher code</td></tr>
+  <tr><td>RegActivation</td><td>/activation</td><td>POST</td><td>Activate user account via voucher activation</td></tr>
+  <tr><td>Voucher</td><td>/Voucher</td><td>GET</td><td>Validate voucher code</td></tr>
+  <tr><td>CheckOut</td><td>/CheckOut</td><td>POST</td><td>Proxy checkout to mbooks</td></tr>
+  <tr><td>GetAllPurchases</td><td>/GetAllPurchases</td><td>GET</td><td>Proxy purchase list from mbooks</td></tr>
+  <tr><td>ManagePurchases</td><td>/ManagePurchases</td><td>POST/DELETE</td><td>Proxy purchase management to mbooks</td></tr>
+  <tr><td>ChangePassword</td><td>/ChangePassword</td><td>POST</td><td>Initiate password reset (sends email)</td></tr>
+  <tr><td>ChangePasswordCode</td><td>/ChangePasswordCode</td><td>POST</td><td>Verify password reset code</td></tr>
+  <tr><td>ChangePasswordNewPassword</td><td>/ChangePasswordNewPassword</td><td>POST</td><td>Set new password</td></tr>
+  <tr><td>LoggingOut</td><td>/logout</td><td>GET</td><td>Invalidate session, logout device</td></tr>
+</table>
+
+<h3>Filters</h3>
+<table>
+  <tr><th>Filter</th><th>URL Patterns</th><th>Purpose</th></tr>
+  <tr><td>AuthFilter</td><td>/admin/*, /GetAllPurchases, /CheckOut, /ManagePurchases, /logout</td><td>Validates session + XSRF-TOKEN cookie match</td></tr>
+  <tr><td>ActiveVoucherFilter</td><td>/activation</td><td>Voucher activation guard</td></tr>
+  <tr><td>ChangePswFilter</td><td>/ChangePasswordCode, /ChangePasswordNewPassword</td><td>Password-change flow guard</td></tr>
+  <tr><td>CORSFilter</td><td>/*</td><td>Adds CORS headers for cross-origin requests</td></tr>
+</table>
+
+<h3>Key Classes</h3>
+<table>
+  <tr><th>Class</th><th>Role</th></tr>
+  <tr><td>SQLAccess</td><td>Static synchronized methods wrapping stored-procedure calls via JDBC CallableStatement</td></tr>
+  <tr><td>DBConnectionManager</td><td>Raw JDBC DriverManager connection, catalog set from <code>SystemConstants.DB_CATALOG</code></td></tr>
+  <tr><td>ServiceClient</td><td>RESTEasy client proxying requests to mbook/mbooks. Registers <code>RequestFilter</code> to forward headers (X-Token, Ciphertext, cookies, uuid, token2, TIME_)</td></tr>
+  <tr><td>hmac512</td><td>HMAC-SHA512 computation matching the iOS client's handshake algorithm</td></tr>
+  <tr><td>AesUtil</td><td>AES encryption/decryption for XSRF token generation and deviceId decryption</td></tr>
+</table>
+</section>
+
+<!-- ──────── SERVICE: mbook ──────── -->
+<section id="svc-mbook">
+<h2>Service: mbook-quarkus</h2>
+<p><span class="badge badge-green">Port 8888</span> <span class="badge badge-green">Context /mbook-1</span> <span class="badge badge-green">DB: login_</span></p>
+
+<h3>REST Endpoints</h3>
+<table>
+  <tr><th>Path</th><th>Method</th><th>Purpose</th></tr>
+  <tr><td>/rest/user/{user}/{token1}</td><td>GET</td><td>Get user profile (uuid, email, profilePicture)</td></tr>
+  <tr><td>/rest/device/{uuid}</td><td>GET</td><td>List devices for a user</td></tr>
+  <tr><td>/rest/news/{user}</td><td>GET</td><td>Get new events/notifications for user</td></tr>
+  <tr><td>/rest/newuser/{newuser}</td><td>GET</td><td>Check if username is available</td></tr>
+  <tr><td>/rest/newemail/{newemail}</td><td>GET</td><td>Check if email is available</td></tr>
+</table>
+
+<h3>Filters (JAX-RS @Provider)</h3>
+<table>
+  <tr><th>Filter</th><th>Applies To</th><th>Purpose</th></tr>
+  <tr><td>CiphertextFilter</td><td>Paths containing "user"</td><td>Verifies <code>Ciphertext</code> header == <code>token2</code> header</td></tr>
+  <tr><td>CookieFilter</td><td>Paths containing "user"</td><td>Reconstructs XSRF token from <code>TIME_</code> + <code>token2</code> headers, validates against <code>XSRF-TOKEN</code> cookie</td></tr>
+</table>
+
+<h3>Entities (JPA → login_ schema)</h3>
+<table>
+  <tr><th>Entity</th><th>Table</th><th>Fields</th></tr>
+  <tr><td>Logins</td><td>logins</td><td>id, user, uuid, email, profilePicture</td></tr>
+  <tr><td>Devices</td><td>devices</td><td>id, deviceId, uuid</td></tr>
+  <tr><td>Tokens</td><td>Tokens</td><td>id, deviceId, token1, token2, TIME_</td></tr>
+</table>
+</section>
+
+<!-- ──────── SERVICE: mbooks ──────── -->
+<section id="svc-mbooks">
+<h2>Service: mbooks-quarkus</h2>
+<p><span class="badge badge-orange">Port 8080</span> <span class="badge badge-orange">Context /mbooks-1</span> <span class="badge badge-orange">DB: book</span></p>
+
+<h3>REST Endpoints</h3>
+<table>
+  <tr><th>Path</th><th>Method</th><th>Purpose</th></tr>
+  <tr><td>/rest/book/hello</td><td>GET</td><td>Health check</td></tr>
+  <tr><td>/rest/book/movies</td><td>GET</td><td>List all movies (paginated)</td></tr>
+  <tr><td>/rest/book/movies/{name}/{order}</td><td>GET</td><td>Search movies by name</td></tr>
+  <tr><td>/rest/book/movies/search?match=&amp;category=</td><td>GET</td><td>Full-text search movies</td></tr>
+  <tr><td>/rest/book/movie/{movieId}</td><td>GET</td><td>Get single movie details</td></tr>
+  <tr><td>/rest/book/venues/{movieId}</td><td>GET</td><td>Get venues showing a movie</td></tr>
+  <tr><td>/rest/book/seats/{screenId}</td><td>GET</td><td>Get seat map for a screen</td></tr>
+  <tr><td>/rest/book/payment/clientToken</td><td>GET</td><td>Generate Braintree client token</td></tr>
+  <tr><td>/rest/book/payment/fullcheckout2</td><td>POST</td><td>Reserve seats + process Braintree payment</td></tr>
+  <tr><td>/rest/book/payment/webcheckout</td><td>POST</td><td>Web-only checkout flow</td></tr>
+  <tr><td>/rest/book/purchases</td><td>GET</td><td>List purchases for a user (by uuid header)</td></tr>
+  <tr><td>/rest/book/purchases/tickets?purchaseId=</td><td>GET</td><td>Get tickets for a purchase</td></tr>
+  <tr><td>/rest/book/purchases/manage</td><td>POST</td><td>Cancel tickets in a purchase</td></tr>
+  <tr><td>/rest/book/purchases/delete</td><td>DELETE</td><td>Delete a purchase</td></tr>
+</table>
+
+<h3>Entities (JPA → book schema)</h3>
+<table>
+  <tr><th>Entity</th><th>Table</th><th>Key Relationships</th></tr>
+  <tr><td>Movie</td><td>Movie</td><td>1:N → Screen</td></tr>
+  <tr><td>Screen</td><td>Screen</td><td>N:1 → Movie, 1:1 → ScreeningDates, 1:N → Seats</td></tr>
+  <tr><td>ScreeningDates</td><td>ScreeningDates</td><td>1:1 ← Screen, N:1 → Venues</td></tr>
+  <tr><td>Venues</td><td>Venues</td><td>1:1 → Screen, N:1 → Location</td></tr>
+  <tr><td>Location</td><td>location</td><td>Referenced by Venues</td></tr>
+  <tr><td>Seats</td><td>Seats</td><td>N:1 → Screen</td></tr>
+  <tr><td>Ticket</td><td>Ticket</td><td>1:1 → Screen, N:1 → Seats, N:1 → Purchase</td></tr>
+  <tr><td>Purchase</td><td>Purchase</td><td>1:N → Ticket (uuid-based user link)</td></tr>
+</table>
+
+<h3>Key Service Classes</h3>
+<table>
+  <tr><th>Class</th><th>Role</th></tr>
+  <tr><td>BookingHandlerImpl</td><td>Orchestration layer — delegates to DAO singleton for all movie/venue/seat queries</td></tr>
+  <tr><td>TicketService</td><td>Seat reservation with pessimistic locking; rollback on failure</td></tr>
+  <tr><td>PaymentService</td><td>Braintree gateway integration (sandbox); customer creation, transaction processing</td></tr>
+  <tr><td>PurchaseDAO</td><td>Purchase/ticket CRUD; Braintree customer lookup by uuid</td></tr>
+  <tr><td>DAO (singleton)</td><td>Raw Hibernate session management; all DB queries go through <code>DAO.instance()</code></td></tr>
+</table>
+</section>
+
+<!-- ──────── SERVICE: images ──────── -->
+<section id="svc-images">
+<h2>Service: simple-service-webapp-quarkus</h2>
+<p><span class="badge badge-purple">Port 8085</span> <span class="badge badge-purple">Context /simple-service-webapp</span></p>
+
+<h3>Endpoints</h3>
+<table>
+  <tr><th>Path</th><th>Purpose</th></tr>
+  <tr><td>/webapi/myresource</td><td>Health check → "Got it"</td></tr>
+  <tr><td>/webapi/myresource/images/{file}</td><td>General images from <code>pictures/images/</code></td></tr>
+  <tr><td>/webapi/myresource/images/movies/{file}</td><td>Movie posters from <code>pictures/movies/</code></td></tr>
+  <tr><td>/webapi/myresource/images/venues/{file}</td><td>Venue photos from <code>pictures/venues/</code></td></tr>
+  <tr><td>/webapi/myresource/images/profiles/{file}</td><td>Profile pictures from <code>pictures/profiles/</code></td></tr>
+</table>
+<p>Config property <code>pictures.base-dir</code> (env: <code>PICTURES_BASE_DIR</code>) defaults to <code>../pictures</code>. In K8s it's set to <code>/pictures</code> with an emptyDir volume that must be populated after deployment.</p>
+</section>
+
+<!-- ──────── DB: login_ ──────── -->
+<section id="db-login">
+<h2>Database Schema: login_</h2>
+<p>Used by <code>dalogin</code> (raw JDBC) and <code>mbook</code> (Hibernate/JPA).</p>
+
+<div class="diagram-container">
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 900 420" font-family="Arial,sans-serif" font-size="11">
+  <rect width="900" height="420" fill="#f8f9fa" rx="8"/>
+
+  <!-- logins -->
+  <rect x="20" y="20" width="200" height="150" rx="6" fill="#fff" stroke="#2e7d32" stroke-width="2"/>
+  <rect x="20" y="20" width="200" height="25" rx="6" fill="#2e7d32"/><rect x="20" y="35" width="200" height="10" fill="#2e7d32"/>
+  <text x="120" y="38" text-anchor="middle" fill="#fff" font-weight="bold" font-size="13">logins</text>
+  <text x="30" y="62" fill="#333">🔑 id INT (PK, AUTO)</text>
+  <text x="30" y="78" fill="#333">hash_ CHAR(255)</text>
+  <text x="30" y="94" fill="#333">user CHAR(255)</text>
+  <text x="30" y="110" fill="#333">uuid CHAR(255) [trigger]</text>
+  <text x="30" y="126" fill="#333">email CHAR(255)</text>
+  <text x="30" y="142" fill="#333">profilePicture VARCHAR(1024)</text>
+  <text x="30" y="158" fill="#333">TIME_ TIMESTAMP</text>
+
+  <!-- devices -->
+  <rect x="260" y="20" width="200" height="120" rx="6" fill="#fff" stroke="#7b1fa2" stroke-width="2"/>
+  <rect x="260" y="20" width="200" height="25" rx="6" fill="#7b1fa2"/><rect x="260" y="35" width="200" height="10" fill="#7b1fa2"/>
+  <text x="360" y="38" text-anchor="middle" fill="#fff" font-weight="bold" font-size="13">devices</text>
+  <text x="270" y="62" fill="#333">🔑 id INT (PK, AUTO)</text>
+  <text x="270" y="78" fill="#333">deviceId CHAR(255)</text>
+  <text x="270" y="94" fill="#333">uuid CHAR(255) → logins</text>
+  <text x="270" y="110" fill="#333">TIME_ TIMESTAMP</text>
+  <text x="270" y="126" fill="#333">os CHAR(45)</text>
+
+  <!-- device_states -->
+  <rect x="260" y="170" width="200" height="130" rx="6" fill="#fff" stroke="#c62828" stroke-width="2"/>
+  <rect x="260" y="170" width="200" height="25" rx="6" fill="#c62828"/><rect x="260" y="185" width="200" height="10" fill="#c62828"/>
+  <text x="360" y="188" text-anchor="middle" fill="#fff" font-weight="bold" font-size="13">device_states</text>
+  <text x="270" y="212" fill="#333">🔑 id INT (PK, AUTO)</text>
+  <text x="270" y="228" fill="#333">uuid CHAR(255)</text>
+  <text x="270" y="244" fill="#333">state ENUM(logged_in,…)</text>
+  <text x="270" y="260" fill="#333">SessionID CHAR(255)</text>
+  <text x="270" y="276" fill="#333">deviceId CHAR(255)</text>
+  <text x="270" y="292" fill="#333">devices_id FK → devices</text>
+
+  <!-- Last_seen -->
+  <rect x="500" y="20" width="200" height="110" rx="6" fill="#fff" stroke="#e65100" stroke-width="2"/>
+  <rect x="500" y="20" width="200" height="25" rx="6" fill="#e65100"/><rect x="500" y="35" width="200" height="10" fill="#e65100"/>
+  <text x="600" y="38" text-anchor="middle" fill="#fff" font-weight="bold" font-size="13">Last_seen</text>
+  <text x="510" y="62" fill="#333">🔑 id INT (PK, AUTO)</text>
+  <text x="510" y="78" fill="#333">deviceId CHAR(255)</text>
+  <text x="510" y="94" fill="#333">Session_ BIGINT</text>
+  <text x="510" y="110" fill="#333">devices_id FK → device_states</text>
+
+  <!-- Tokens -->
+  <rect x="500" y="160" width="200" height="120" rx="6" fill="#fff" stroke="#283593" stroke-width="2"/>
+  <rect x="500" y="160" width="200" height="25" rx="6" fill="#283593"/><rect x="500" y="175" width="200" height="10" fill="#283593"/>
+  <text x="600" y="178" text-anchor="middle" fill="#fff" font-weight="bold" font-size="13">Tokens</text>
+  <text x="510" y="202" fill="#333">🔑 id INT (PK, AUTO)</text>
+  <text x="510" y="218" fill="#333">deviceId CHAR(255)</text>
+  <text x="510" y="234" fill="#333">token1 CHAR(255) [trigger]</text>
+  <text x="510" y="250" fill="#333">token2 CHAR(255) [trigger]</text>
+  <text x="510" y="266" fill="#333">TIME_ TIMESTAMP</text>
+
+  <!-- vouchers -->
+  <rect x="20" y="200" width="200" height="90" rx="6" fill="#fff" stroke="#00838f" stroke-width="2"/>
+  <rect x="20" y="200" width="200" height="25" rx="6" fill="#00838f"/><rect x="20" y="215" width="200" height="10" fill="#00838f"/>
+  <text x="120" y="218" text-anchor="middle" fill="#fff" font-weight="bold" font-size="13">vouchers</text>
+  <text x="30" y="242" fill="#333">🔑 id INT (PK, AUTO)</text>
+  <text x="30" y="258" fill="#333">uuid CHAR(255) → logins</text>
+  <text x="30" y="274" fill="#333">voucher_ CHAR(255)</text>
+  <text x="30" y="286" fill="#333">voucherUuid [trigger: UUID()]</text>
+
+  <!-- voucher_states -->
+  <rect x="20" y="320" width="220" height="90" rx="6" fill="#fff" stroke="#4a148c" stroke-width="2"/>
+  <rect x="20" y="320" width="220" height="25" rx="6" fill="#4a148c"/><rect x="20" y="335" width="220" height="10" fill="#4a148c"/>
+  <text x="130" y="338" text-anchor="middle" fill="#fff" font-weight="bold" font-size="13">voucher_states</text>
+  <text x="30" y="362" fill="#333">🔑 id INT (PK, AUTO)</text>
+  <text x="30" y="378" fill="#333">voucher_ CHAR(255) → vouchers</text>
+  <text x="30" y="394" fill="#333">state ENUM(free,processing,registered)</text>
+  <text x="30" y="408" fill="#333">isActivated, toBeActivated, activation_Token</text>
+
+  <!-- forgotPsw -->
+  <rect x="500" y="310" width="200" height="100" rx="6" fill="#fff" stroke="#f57f17" stroke-width="2"/>
+  <rect x="500" y="310" width="200" height="25" rx="6" fill="#f57f17"/><rect x="500" y="325" width="200" height="10" fill="#f57f17"/>
+  <text x="600" y="328" text-anchor="middle" fill="#fff" font-weight="bold" font-size="13">forgotPsw</text>
+  <text x="510" y="352" fill="#333">🔑 id INT (PK, AUTO)</text>
+  <text x="510" y="368" fill="#333">forgotUserEmail CHAR(255)</text>
+  <text x="510" y="384" fill="#333">forgotRequestToken [trigger]</text>
+  <text x="510" y="400" fill="#333">forgotRequestTime BIGINT</text>
+
+  <!-- Relationships -->
+  <line x1="220" y1="95" x2="260" y2="80" stroke="#999" stroke-width="1.5"/>
+  <line x1="220" y1="250" x2="220" y2="320" stroke="#999" stroke-width="1.5"/>
+  <line x1="460" y1="80" x2="500" y2="60" stroke="#999" stroke-width="1.5"/>
+  <line x1="460" y1="250" x2="500" y2="200" stroke="#999" stroke-width="1.5"/>
+</svg>
+</div>
+</section>
+
+<!-- ──────── DB: book ──────── -->
+<section id="db-book">
+<h2>Database Schema: book</h2>
+<p>Used by <code>mbooks</code> (Hibernate/JPA via singleton DAO).</p>
+
+<div class="diagram-container">
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 900 400" font-family="Arial,sans-serif" font-size="11">
+  <rect width="900" height="400" fill="#f8f9fa" rx="8"/>
+
+  <!-- Movie -->
+  <rect x="20" y="20" width="200" height="140" rx="6" fill="#fff" stroke="#f57f17" stroke-width="2"/>
+  <rect x="20" y="20" width="200" height="25" rx="6" fill="#f57f17"/><rect x="20" y="35" width="200" height="10" fill="#f57f17"/>
+  <text x="120" y="38" text-anchor="middle" fill="#fff" font-weight="bold" font-size="13">Movie</text>
+  <text x="30" y="62" fill="#333">🔑 movieId INT (PK, AUTO)</text>
+  <text x="30" y="78" fill="#333">name VARCHAR(255)</text>
+  <text x="30" y="94" fill="#333">detail TEXT</text>
+  <text x="30" y="110" fill="#333">thumbnail_picture VARCHAR</text>
+  <text x="30" y="126" fill="#333">large_picture VARCHAR</text>
+  <text x="30" y="142" fill="#333">iMDB_url VARCHAR</text>
+  <text x="30" y="155" fill="#333">category VARCHAR</text>
+
+  <!-- Screen -->
+  <rect x="260" y="20" width="200" height="100" rx="6" fill="#fff" stroke="#2e7d32" stroke-width="2"/>
+  <rect x="260" y="20" width="200" height="25" rx="6" fill="#2e7d32"/><rect x="260" y="35" width="200" height="10" fill="#2e7d32"/>
+  <text x="360" y="38" text-anchor="middle" fill="#fff" font-weight="bold" font-size="13">Screen</text>
+  <text x="270" y="62" fill="#333">🔑 screenId VARCHAR (PK)</text>
+  <text x="270" y="78" fill="#333">seats INT</text>
+  <text x="270" y="94" fill="#333">movie_movieId FK → Movie</text>
+  <text x="270" y="110" fill="#333">screeningDates_id FK</text>
+
+  <!-- ScreeningDates -->
+  <rect x="500" y="20" width="200" height="100" rx="6" fill="#fff" stroke="#7b1fa2" stroke-width="2"/>
+  <rect x="500" y="20" width="200" height="25" rx="6" fill="#7b1fa2"/><rect x="500" y="35" width="200" height="10" fill="#7b1fa2"/>
+  <text x="600" y="38" text-anchor="middle" fill="#fff" font-weight="bold" font-size="13">ScreeningDates</text>
+  <text x="510" y="62" fill="#333">🔑 screeningDateId INT (PK)</text>
+  <text x="510" y="78" fill="#333">screeningDate DATETIME</text>
+  <text x="510" y="94" fill="#333">venues_venuesId FK → Venues</text>
+
+  <!-- Venues -->
+  <rect x="710" y="20" width="170" height="120" rx="6" fill="#fff" stroke="#c62828" stroke-width="2"/>
+  <rect x="710" y="20" width="170" height="25" rx="6" fill="#c62828"/><rect x="710" y="35" width="170" height="10" fill="#c62828"/>
+  <text x="795" y="38" text-anchor="middle" fill="#fff" font-weight="bold" font-size="13">Venues</text>
+  <text x="720" y="62" fill="#333">🔑 venuesId INT (PK)</text>
+  <text x="720" y="78" fill="#333">name, address, contact</text>
+  <text x="720" y="94" fill="#333">venues_picture VARCHAR</text>
+  <text x="720" y="110" fill="#333">screen_screenId FK</text>
+  <text x="720" y="126" fill="#333">location_locationId FK</text>
+
+  <!-- Seats -->
+  <rect x="260" y="150" width="200" height="120" rx="6" fill="#fff" stroke="#00838f" stroke-width="2"/>
+  <rect x="260" y="150" width="200" height="25" rx="6" fill="#00838f"/><rect x="260" y="165" width="200" height="10" fill="#00838f"/>
+  <text x="360" y="168" text-anchor="middle" fill="#fff" font-weight="bold" font-size="13">Seats</text>
+  <text x="270" y="192" fill="#333">🔑 seatId INT (PK, AUTO)</text>
+  <text x="270" y="208" fill="#333">seatNumber, seatRow</text>
+  <text x="270" y="224" fill="#333">isReserved VARCHAR</text>
+  <text x="270" y="240" fill="#333">price INT, tax DOUBLE</text>
+  <text x="270" y="256" fill="#333">screen_screenId FK → Screen</text>
+
+  <!-- Ticket -->
+  <rect x="20" y="200" width="200" height="130" rx="6" fill="#fff" stroke="#283593" stroke-width="2"/>
+  <rect x="20" y="200" width="200" height="25" rx="6" fill="#283593"/><rect x="20" y="215" width="200" height="10" fill="#283593"/>
+  <text x="120" y="218" text-anchor="middle" fill="#fff" font-weight="bold" font-size="13">Ticket</text>
+  <text x="30" y="242" fill="#333">🔑 ticketId INT (PK, AUTO)</text>
+  <text x="30" y="258" fill="#333">price INT, tax DOUBLE</text>
+  <text x="30" y="274" fill="#333">seats_seatNumber, seats_seatRow</text>
+  <text x="30" y="290" fill="#333">screen_screenId FK → Screen</text>
+  <text x="30" y="306" fill="#333">seats FK → Seats</text>
+  <text x="30" y="322" fill="#333">purchase_purchaseId FK</text>
+
+  <!-- Purchase -->
+  <rect x="500" y="200" width="200" height="120" rx="6" fill="#fff" stroke="#e65100" stroke-width="2"/>
+  <rect x="500" y="200" width="200" height="25" rx="6" fill="#e65100"/><rect x="500" y="215" width="200" height="10" fill="#e65100"/>
+  <text x="600" y="218" text-anchor="middle" fill="#fff" font-weight="bold" font-size="13">Purchase</text>
+  <text x="510" y="242" fill="#333">🔑 purchaseId INT (PK, AUTO)</text>
+  <text x="510" y="258" fill="#333">uuid VARCHAR (user link)</text>
+  <text x="510" y="274" fill="#333">orderId VARCHAR</text>
+  <text x="510" y="290" fill="#333">TIME_ TIMESTAMP</text>
+  <text x="510" y="306" fill="#333">braintree_customerId VARCHAR</text>
+
+  <!-- Location -->
+  <rect x="710" y="170" width="170" height="80" rx="6" fill="#fff" stroke="#4a148c" stroke-width="2"/>
+  <rect x="710" y="170" width="170" height="25" rx="6" fill="#4a148c"/><rect x="710" y="185" width="170" height="10" fill="#4a148c"/>
+  <text x="795" y="188" text-anchor="middle" fill="#fff" font-weight="bold" font-size="13">Location</text>
+  <text x="720" y="212" fill="#333">🔑 locationId INT (PK)</text>
+  <text x="720" y="228" fill="#333">location VARCHAR</text>
+  <text x="720" y="244" fill="#333">area VARCHAR</text>
+
+  <!-- Relationships -->
+  <line x1="220" y1="80" x2="260" y2="70" stroke="#999" stroke-width="1.5"/>
+  <line x1="460" y1="80" x2="500" y2="60" stroke="#999" stroke-width="1.5"/>
+  <line x1="700" y1="60" x2="710" y2="60" stroke="#999" stroke-width="1.5"/>
+  <line x1="360" y1="120" x2="360" y2="150" stroke="#999" stroke-width="1.5"/>
+  <line x1="220" y1="290" x2="260" y2="220" stroke="#999" stroke-width="1.5"/>
+  <line x1="220" y1="310" x2="500" y2="260" stroke="#999" stroke-width="1.5"/>
+</svg>
+</div>
+</section>
+
+<!-- ──────── STORED PROCEDURES ──────── -->
+<section id="db-sprocs">
+<h2>Stored Procedures (login_)</h2>
+<table>
+  <tr><th>Procedure</th><th>Parameters</th><th>Purpose</th></tr>
+  <tr><td>get_hash</td><td>hash_, user_</td><td>Verify password hash for login</td></tr>
+  <tr><td>get_uuid</td><td>user_</td><td>Get UUID by username</td></tr>
+  <tr><td>get_token</td><td>deviceId_</td><td>Get latest token1 for a device</td></tr>
+  <tr><td>get_token2</td><td>deviceId_</td><td>Get token2 + Session_ for a device</td></tr>
+  <tr><td>insert_device</td><td>deviceId_, user_</td><td>Register a new device for user</td></tr>
+  <tr><td>insert_device_</td><td>deviceId_, user_</td><td>Upsert device — insert or update state to logged_in</td></tr>
+  <tr><td>insert_sessionCreated</td><td>deviceId_, sessionCreated_, sessionID_</td><td>Record session creation, update Last_seen and device_states</td></tr>
+  <tr><td>insert_voucher</td><td>voucher, user_, pass</td><td>Link voucher to user during registration</td></tr>
+  <tr><td>copy_token2</td><td>voucher_</td><td>Copy token2 to voucher_states.activation_token</td></tr>
+  <tr><td>isActivated</td><td>user_</td><td>Check if user's voucher is activated (returns 0/1)</td></tr>
+  <tr><td>activate_voucher</td><td>user</td><td>Mark voucher as activated</td></tr>
+  <tr><td>get_voucher</td><td>voucher_</td><td>Get free voucher by code</td></tr>
+  <tr><td>set_voucher</td><td>voucher_</td><td>Set voucher state to 'processing'</td></tr>
+  <tr><td>check_voucher</td><td>voucher_</td><td>Check if voucher is 'registered'</td></tr>
+  <tr><td>register_voucher</td><td>voucher_</td><td>Promote processing → registered</td></tr>
+  <tr><td>reset_voucher</td><td>voucher_, user_</td><td>Reset voucher to 'free', delete user + voucher records</td></tr>
+  <tr><td>delete_user</td><td>user_</td><td>Delete user and associated vouchers</td></tr>
+  <tr><td>find_email</td><td>email</td><td>Lookup email for password reset</td></tr>
+  <tr><td>find_email2</td><td>email</td><td>Get reset token + time for email</td></tr>
+  <tr><td>forgot_password</td><td>email, time</td><td>Create/update forgot-password request</td></tr>
+  <tr><td>update_password</td><td>pass_, email_</td><td>Update password hash, invalidate reset token</td></tr>
+  <tr><td>get_activation_vocher</td><td>user</td><td>Get activation token + email for a user</td></tr>
+  <tr><td>get_processing_voucher</td><td>voucher_</td><td>Get processing-state voucher</td></tr>
+  <tr><td>logout_device</td><td>sessionID_</td><td>Set device state to logged_out, clear tokens</td></tr>
+</table>
+</section>
+
+<!-- ──────── TRIGGERS ──────── -->
+<section id="db-triggers">
+<h2>Triggers (login_)</h2>
+<table>
+  <tr><th>Trigger</th><th>Table</th><th>Event</th><th>Purpose</th></tr>
+  <tr><td>insert_guid</td><td>logins</td><td>BEFORE INSERT</td><td>Auto-generate UUID for new users</td></tr>
+  <tr><td>vouchers</td><td>logins</td><td>AFTER INSERT</td><td>Auto-create voucher record for new user</td></tr>
+  <tr><td>deviceId_uuid</td><td>devices</td><td>AFTER INSERT</td><td>Auto-create device_states record with 'logged_in' state</td></tr>
+  <tr><td>tokens</td><td>Last_seen</td><td>AFTER INSERT</td><td>Auto-create Tokens record for new Last_seen entry</td></tr>
+  <tr><td>Last_seen_AFTER_UPDATE</td><td>Last_seen</td><td>AFTER UPDATE</td><td>Propagate deviceId updates to Tokens</td></tr>
+  <tr><td>Tokens_BEFORE_INSERT</td><td>Tokens</td><td>BEFORE INSERT</td><td>Auto-generate token1 (UUID) and token2 (RAND)</td></tr>
+  <tr><td>Tokens_BEFORE_UPDATE</td><td>Tokens</td><td>BEFORE UPDATE</td><td>Regenerate token1 + token2 on every update</td></tr>
+  <tr><td>forgotPsw_BEFORE_INSERT</td><td>forgotPsw</td><td>BEFORE INSERT</td><td>Auto-generate forgotRequestToken (RAND), set isValid=1</td></tr>
+  <tr><td>forgotPsw_BEFORE_UPDATE</td><td>forgotPsw</td><td>BEFORE UPDATE</td><td>Regenerate forgotRequestToken on update</td></tr>
+  <tr><td>insert_voucher</td><td>vouchers</td><td>BEFORE INSERT</td><td>Auto-generate voucherUuid (UUID)</td></tr>
+</table>
+</section>
+
+<!-- ──────── KUBERNETES ──────── -->
+<section id="k8s">
+<h2>Kubernetes Topology</h2>
+<div class="diagram-container">
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 800 350" font-family="Arial,sans-serif" font-size="11">
+  <rect width="800" height="350" fill="#f8f9fa" rx="8"/>
+
+  <text x="400" y="25" text-anchor="middle" fill="#333" font-weight="bold" font-size="16">Namespace: cinemas</text>
+
+  <!-- Pods -->
+  <rect x="20" y="50" width="110" height="60" rx="6" fill="#e8f5e9" stroke="#2e7d32" stroke-width="2"/>
+  <text x="75" y="75" text-anchor="middle" fill="#2e7d32" font-weight="bold">dalogin</text>
+  <text x="75" y="95" text-anchor="middle" fill="#555" font-size="10">:8080</text>
+
+  <rect x="150" y="50" width="110" height="60" rx="6" fill="#f3e5f5" stroke="#7b1fa2" stroke-width="2"/>
+  <text x="205" y="75" text-anchor="middle" fill="#7b1fa2" font-weight="bold">mbook</text>
+  <text x="205" y="95" text-anchor="middle" fill="#555" font-size="10">:8888</text>
+
+  <rect x="280" y="50" width="110" height="60" rx="6" fill="#fff8e1" stroke="#f57f17" stroke-width="2"/>
+  <text x="335" y="75" text-anchor="middle" fill="#f57f17" font-weight="bold">mbooks</text>
+  <text x="335" y="95" text-anchor="middle" fill="#555" font-size="10">:8080</text>
+
+  <rect x="410" y="50" width="140" height="60" rx="6" fill="#e0f7fa" stroke="#00838f" stroke-width="2"/>
+  <text x="480" y="75" text-anchor="middle" fill="#00838f" font-weight="bold">image-service</text>
+  <text x="480" y="95" text-anchor="middle" fill="#555" font-size="10">:8085</text>
+
+  <rect x="570" y="50" width="100" height="60" rx="6" fill="#fce4ec" stroke="#c62828" stroke-width="2"/>
+  <text x="620" y="75" text-anchor="middle" fill="#c62828" font-weight="bold">apache</text>
+  <text x="620" y="95" text-anchor="middle" fill="#555" font-size="10">:80</text>
+
+  <rect x="690" y="50" width="90" height="60" rx="6" fill="#fff3e0" stroke="#e65100" stroke-width="2"/>
+  <text x="735" y="75" text-anchor="middle" fill="#e65100" font-weight="bold">nginx</text>
+  <text x="735" y="95" text-anchor="middle" fill="#555" font-size="10">ingress</text>
+
+  <!-- Infra pods -->
+  <rect x="20" y="150" width="110" height="60" rx="6" fill="#fce4ec" stroke="#c62828" stroke-width="2"/>
+  <text x="75" y="175" text-anchor="middle" fill="#c62828" font-weight="bold">MySQL 8</text>
+  <text x="75" y="195" text-anchor="middle" fill="#555" font-size="10">:3306</text>
+
+  <rect x="150" y="150" width="110" height="60" rx="6" fill="#ede7f6" stroke="#4a148c" stroke-width="2"/>
+  <text x="205" y="175" text-anchor="middle" fill="#4a148c" font-weight="bold">Kafka</text>
+  <text x="205" y="195" text-anchor="middle" fill="#555" font-size="10">:9092</text>
+
+  <rect x="280" y="150" width="110" height="60" rx="6" fill="#f3e5f5" stroke="#7b1fa2" stroke-width="2"/>
+  <text x="335" y="175" text-anchor="middle" fill="#7b1fa2" font-weight="bold">ZooKeeper</text>
+  <text x="335" y="195" text-anchor="middle" fill="#555" font-size="10">:2181</text>
+
+  <!-- Services table -->
+  <text x="20" y="250" fill="#333" font-weight="bold" font-size="13">Services (ClusterIP)</text>
+  <rect x="20" y="260" width="760" height="80" rx="6" fill="#fff" stroke="#ddd"/>
+  <text x="30" y="280" fill="#555" font-size="10">mysql:3306 │ kafka:9092 │ zookeeper:2181 │ dalogin:8080 │ mbook:8888 │ mbooks:8080 │ simple-service-webapp:8085 │ apache:80</text>
+  <text x="30" y="300" fill="#555" font-size="10" font-weight="bold">Ingress:</text>
+  <text x="30" y="315" fill="#555" font-size="10">milo.crabdance.com → apache:80 (TLS termination via cinemas-tls secret, nginx.ingress class)</text>
+  <text x="30" y="330" fill="#555" font-size="10">MySQL args: --lower-case-table-names=1 │ emptyDir for mysql-data │ ConfigMap: 00-init.sql creates login_ + book + sqluser grants</text>
+</svg>
+</div>
+</section>
+
+<!-- ──────── DEPLOY RUNBOOK ──────── -->
+<section id="deploy">
+<h2>Deploy Runbook (Quick Reference)</h2>
+<pre><code># 1. Start cluster
+minikube start --driver=qemu2 --cpus=4 --memory=8192
+minikube addons enable ingress
+
+# 2. Build & load images
+for svc in dalogin-quarkus mbook-quarkus mbooks-quarkus simple-service-webapp-quarkus; do
+  (cd $svc && ./mvnw package -DskipTests)
+  podman build -t ${svc}:local ./${svc}
+  podman save -o /tmp/${svc}.tar localhost/${svc}:local
+  minikube image load /tmp/${svc}.tar
+  minikube ssh -- sudo ctr -n k8s.io images tag localhost/${svc}:local docker.io/library/${svc}:local
+done
+
+# 3. Deploy
+kubectl apply -f k8infra/quarkus-backend.yaml
+kubectl -n cinemas get pods  # wait for Running
+
+# 4. Seed databases (IMPORTANT: apply fix scripts after import!)
+kubectl -n cinemas exec -i deploy/mysql -- mysql -uroot -prootpw &lt; mysql_8/login.sql
+kubectl -n cinemas exec -i deploy/mysql -- mysql -uroot -prootpw &lt; mysql_8/book.sql
+kubectl -n cinemas exec -i deploy/mysql -- mysql -uroot -prootpw &lt; k8infra/fix-sprocs.sql
+kubectl -n cinemas exec -i deploy/mysql -- mysql -uroot -prootpw &lt; k8infra/fix-triggers.sql
+
+# 5. ⚠️  Ensure NO 'login' database exists (only login_)
+kubectl -n cinemas exec deploy/mysql -- mysql -uroot -prootpw -e "DROP DATABASE IF EXISTS login;"
+
+# 6. Copy pictures into pod
+POD=$(kubectl -n cinemas get pod -l app=simple-service-webapp -o jsonpath='{.items[0].metadata.name}')
+kubectl -n cinemas cp pictures/ $POD:/pictures/
+kubectl -n cinemas exec $POD -- sh -c 'mv /pictures/pictures/* /pictures/ && rmdir /pictures/pictures'
+
+# 7. TLS + networking
+kubectl create secret tls cinemas-tls --cert=k8infra/tls/tls.crt --key=k8infra/tls/tls.key -n cinemas
+kubectl port-forward -n ingress-nginx svc/ingress-nginx-controller 8443:443 &amp;
+echo "rdr pass on lo0 inet proto tcp from any to 127.0.0.1 port 443 -> 127.0.0.1 port 8443" | sudo pfctl -ef -
+
+# 8. Verify
+curl -sk https://milo.crabdance.com/login/
+python3 k8infra/test-login.py
+python3 k8infra/test-login-admin.py</code></pre>
+</section>
+
+<!-- ──────── REFACTORING ──────── -->
+<section id="refactoring">
+<h2>Refactoring Suggestions</h2>
+
+<div class="card priority-high">
+<h4>🔴 HIGH — Thread-Safety: Remove Static Mutable State</h4>
+<p><strong>Where:</strong> <code>HelloWorld.java</code>, <code>SQLAccess.java</code>, <code>mbooks DAO.java</code>, all filters</p>
+<p><strong>Problem:</strong> Servlet fields like <code>pass</code>, <code>user</code>, <code>session</code>, <code>token2</code> are declared <code>volatile static</code>. Under concurrent requests, these get overwritten by other threads between reads. The <code>synchronized</code> on <code>doPost()</code> serializes all requests through a single servlet instance, destroying throughput.</p>
+<p><strong>Fix:</strong> Move all per-request state to local variables inside the method. The servlet should be stateless. Remove <code>synchronized</code> from request methods. Same applies to <code>SQLAccess</code> — the static fields (<code>hash</code>, <code>token</code>, <code>uuid</code>, <code>rs</code>, etc.) should be local to each method call.</p>
+<pre><code>// BEFORE (broken under concurrency)
+private volatile static String user;
+public synchronized void doPost(...) { user = request.getParameter("user"); ... }
+
+// AFTER
+public void doPost(...) { String user = request.getParameter("user"); ... }</code></pre>
+</div>
+
+<div class="card priority-high">
+<h4>🔴 HIGH — Database Connections: Use Connection Pooling</h4>
+<p><strong>Where:</strong> <code>DBConnectionManager.java</code>, <code>SQLAccess.java</code></p>
+<p><strong>Problem:</strong> Every <code>SQLAccess</code> method calls <code>dbManager.getConnection()</code> which creates a new raw <code>DriverManager.getConnection()</code> each time. No connection pooling means every login/query creates and tears down a TCP connection to MySQL.</p>
+<p><strong>Fix:</strong> Use Quarkus's built-in Agroal connection pool (<code>quarkus-agroal</code> + <code>quarkus-jdbc-mysql</code>). Inject <code>javax.sql.DataSource</code> and let Quarkus manage pooling. The <code>QUARKUS_DATASOURCE_*</code> env vars are already configured in the K8s manifest.</p>
+<pre><code>@Inject DataSource dataSource;
+
+public String getHash(String pass, String user) throws SQLException {
+    try (Connection conn = dataSource.getConnection();
+         CallableStatement cstmt = conn.prepareCall("{call get_hash(?, ?)}")) {
+        cstmt.setString(1, pass);
+        cstmt.setString(2, user);
+        ResultSet rs = cstmt.executeQuery();
+        return rs.next() ? rs.getString(1) : null;
+    }
+}</code></pre>
+</div>
+
+<div class="card priority-high">
+<h4>🔴 HIGH — mbooks DAO Singleton: Replace with CDI-Managed Sessions</h4>
+<p><strong>Where:</strong> <code>mbooks-quarkus DAO.java</code>, <code>HibernateUtil.java</code></p>
+<p><strong>Problem:</strong> <code>DAO.instance()</code> is a hand-rolled singleton that opens a <code>Session</code> once and reuses it forever. This is inherently thread-unsafe, causes stale data, and leaks sessions. All methods are <code>synchronized</code>, serializing all database access to a single thread.</p>
+<p><strong>Fix:</strong> Follow the pattern already used in <code>mbook-quarkus</code> — inject a Quarkus-managed <code>Session</code> into a <code>@RequestScoped</code> DAO. Let the container manage session lifecycle, transactions, and connection pooling.</p>
+</div>
+
+<div class="card priority-high">
+<h4>🔴 HIGH — Hardcoded Credentials in Source</h4>
+<p><strong>Where:</strong> <code>BookController.java</code> (Braintree keys), <code>CookieFilter.java</code> / <code>HelloWorld.java</code> (AES SALT/IV), SQL files</p>
+<p><strong>Problem:</strong> Braintree merchant credentials, AES encryption constants, and MySQL passwords are committed in source code.</p>
+<p><strong>Fix:</strong> Move all secrets to Kubernetes Secrets or env-var overrides. Reference via <code>@ConfigProperty</code> or <code>System.getenv()</code>. The AES SALT/IV must be consistent between dalogin and mbook — use a shared K8s Secret.</p>
+</div>
+
+<div class="card priority-medium">
+<h4>🟡 MEDIUM — Replace Stored Procedures with Application Logic</h4>
+<p><strong>Where:</strong> <code>mysql_8/login.sql</code>, <code>SQLAccess.java</code></p>
+<p><strong>Problem:</strong> 24 stored procedures contain business logic (voucher state machines, token management, user registration). They're hard to version, test, debug, and have caused the <code>login</code> vs <code>login_</code> breakage. Trigger-based auto-generation of UUIDs and tokens is invisible and hard to reason about.</p>
+<p><strong>Fix:</strong> Gradually move logic into Java service classes. Keep triggers only for truly database-level concerns (e.g., audit timestamps). Use application-generated UUIDs (<code>UUID.randomUUID()</code>) and tokens (<code>SecureRandom</code>).</p>
+</div>
+
+<div class="card priority-medium">
+<h4>🟡 MEDIUM — Extract a Shared Security Module</h4>
+<p><strong>Where:</strong> <code>dalogin filters/</code>, <code>mbook filters/</code>, <code>mbooks filters/</code></p>
+<p><strong>Problem:</strong> AES constants (SALT, IV, KEYSIZE, ITERATIONCOUNT) are duplicated across 6+ classes in 3 services. The XSRF token verification logic is implemented independently in <code>AuthFilter</code>, <code>CookieFilter</code>, and <code>HelloWorld</code>.</p>
+<p><strong>Fix:</strong> Create a shared <code>cinemas-security</code> Maven module with the AES/HMAC utilities and constants. All three services depend on it. Consider moving to a standard JWT/OAuth2 approach long-term.</p>
+</div>
+
+<div class="card priority-medium">
+<h4>🟡 MEDIUM — API Gateway Pattern: Reduce dalogin Proxy Servlets</h4>
+<p><strong>Where:</strong> <code>CheckOut.java</code>, <code>GetAllPurchases.java</code>, <code>ManagePurchases.java</code></p>
+<p><strong>Problem:</strong> dalogin acts as a manual API gateway — each proxy servlet does nothing but forward the request to mbooks via ServiceClient, adding session headers. This creates unnecessary hops and maintenance burden.</p>
+<p><strong>Fix:</strong> Let Apache (or a proper API gateway) handle header injection. Move session-header forwarding to an Apache <code>mod_headers</code> config or a NGINX auth_request sub-module. Clients can call mbooks directly for non-session-sensitive endpoints.</p>
+</div>
+
+<div class="card priority-medium">
+<h4>🟡 MEDIUM — mbooks BookController: God-Class Decomposition</h4>
+<p><strong>Where:</strong> <code>mbooks-quarkus BookController.java</code> (1171 lines)</p>
+<p><strong>Problem:</strong> Single controller handling movie browsing, seat selection, payment, purchase management, and search — with inline JSON assembly and direct Braintree SDK calls.</p>
+<p><strong>Fix:</strong> Split into domain-specific resources: <code>MovieResource</code>, <code>BookingResource</code>, <code>PaymentResource</code>, <code>PurchaseResource</code>. Use DTO classes instead of manual <code>JSONObject</code> construction (Jackson will auto-serialize).</p>
+</div>
+
+<div class="card priority-low">
+<h4>🟢 LOW — Persistent Pictures Volume</h4>
+<p><strong>Where:</strong> <code>quarkus-backend.yaml</code></p>
+<p><strong>Problem:</strong> Pictures volume is <code>emptyDir</code> — lost on every pod restart. Requires manual <code>kubectl cp</code> after each deployment.</p>
+<p><strong>Fix:</strong> Use a PersistentVolumeClaim, or build the pictures into the Docker image, or use a Minikube hostPath mount. A ConfigMap-based init container could also sync from a git-hosted pictures repo.</p>
+</div>
+
+<div class="card priority-low">
+<h4>🟢 LOW — Standardize Error Responses</h4>
+<p><strong>Where:</strong> All controllers and servlets</p>
+<p><strong>Problem:</strong> Error responses use inconsistent formats: <code>{"Error Message": "..."}</code>, <code>{"Error Details": {...}}</code>, <code>{"error": "..."}</code>, raw strings. HTTP status codes are inconsistent (502 for auth failures, 300 for activation required).</p>
+<p><strong>Fix:</strong> Define a standard error envelope: <code>{"error": {"code": "AUTH_FAILED", "message": "..."}}</code>. Use proper HTTP status codes (401 for auth, 403 for forbidden, 409 for conflict).</p>
+</div>
+
+<div class="card priority-low">
+<h4>🟢 LOW — Add Tests</h4>
+<p><strong>Where:</strong> All services</p>
+<p><strong>Problem:</strong> Test coverage is minimal. Only two Python integration tests exist. No unit tests for business logic, security filters, or stored procedures.</p>
+<p><strong>Fix:</strong> Add Quarkus <code>@QuarkusTest</code> integration tests for each REST endpoint. Add unit tests for <code>hmac512</code>, <code>AesUtil</code>, <code>TicketService</code>, <code>PaymentService</code>. Add Testcontainers-based tests for stored procedures. The Python tests are a good starting point — expand them to cover registration, booking, and error paths.</p>
+</div>
+
+</section>
+
+<!-- ──────── API REFERENCE ──────── -->
+<section id="api-reference">
+<h2>API Reference (Complete)</h2>
+
+<h3>dalogin-quarkus (Auth Gateway)</h3>
+<table>
+  <tr><th>Method</th><th>Endpoint</th><th>Auth</th><th>Description</th></tr>
+  <tr><td><span class="badge badge-green">POST</span></td><td>/login/HelloWorld</td><td>HMAC</td><td>Login with HMAC-SHA512 handshake</td></tr>
+  <tr><td><span class="badge badge-blue">GET</span></td><td>/login/admin</td><td>Session+XSRF</td><td>Retrieve user profile (proxies to mbook)</td></tr>
+  <tr><td><span class="badge badge-green">POST</span></td><td>/login/Registration</td><td>None</td><td>Register with voucher</td></tr>
+  <tr><td><span class="badge badge-green">POST</span></td><td>/login/RegistrationWithoutVoucher</td><td>None</td><td>Register without voucher</td></tr>
+  <tr><td><span class="badge badge-green">POST</span></td><td>/login/activation</td><td>Voucher</td><td>Activate account</td></tr>
+  <tr><td><span class="badge badge-blue">GET</span></td><td>/login/Voucher?voucher=</td><td>None</td><td>Validate voucher code</td></tr>
+  <tr><td><span class="badge badge-green">POST</span></td><td>/login/CheckOut</td><td>Session+XSRF</td><td>Proxy checkout to mbooks</td></tr>
+  <tr><td><span class="badge badge-blue">GET</span></td><td>/login/GetAllPurchases</td><td>Session+XSRF</td><td>Proxy purchases from mbooks</td></tr>
+  <tr><td><span class="badge badge-green">POST</span></td><td>/login/ManagePurchases</td><td>Session+XSRF</td><td>Proxy ticket cancellation</td></tr>
+  <tr><td><span class="badge badge-green">POST</span></td><td>/login/ChangePassword</td><td>None</td><td>Request password reset email</td></tr>
+  <tr><td><span class="badge badge-blue">GET</span></td><td>/login/logout</td><td>Session+XSRF</td><td>Logout and invalidate session</td></tr>
+</table>
+
+<h3>mbook-quarkus (User Service)</h3>
+<table>
+  <tr><th>Method</th><th>Endpoint</th><th>Auth</th><th>Description</th></tr>
+  <tr><td><span class="badge badge-blue">GET</span></td><td>/mbook-1/rest/user/{user}/{token1}</td><td>Ciphertext+Cookie</td><td>Get user profile</td></tr>
+  <tr><td><span class="badge badge-blue">GET</span></td><td>/mbook-1/rest/device/{uuid}</td><td>None</td><td>List user devices</td></tr>
+  <tr><td><span class="badge badge-blue">GET</span></td><td>/mbook-1/rest/news/{user}</td><td>None</td><td>Get user notifications</td></tr>
+  <tr><td><span class="badge badge-blue">GET</span></td><td>/mbook-1/rest/newuser/{name}</td><td>None</td><td>Check username availability</td></tr>
+  <tr><td><span class="badge badge-blue">GET</span></td><td>/mbook-1/rest/newemail/{email}</td><td>None</td><td>Check email availability</td></tr>
+</table>
+
+<h3>mbooks-quarkus (Movie/Booking Service)</h3>
+<table>
+  <tr><th>Method</th><th>Endpoint</th><th>Auth</th><th>Description</th></tr>
+  <tr><td><span class="badge badge-blue">GET</span></td><td>/mbooks-1/rest/book/hello</td><td>None</td><td>Health check</td></tr>
+  <tr><td><span class="badge badge-blue">GET</span></td><td>/mbooks-1/rest/book/movies</td><td>None</td><td>All movies (paginated)</td></tr>
+  <tr><td><span class="badge badge-blue">GET</span></td><td>/mbooks-1/rest/book/movies/{name}/{order}</td><td>None</td><td>Search by name</td></tr>
+  <tr><td><span class="badge badge-blue">GET</span></td><td>/mbooks-1/rest/book/movies/search?match=&amp;category=</td><td>None</td><td>Full-text search</td></tr>
+  <tr><td><span class="badge badge-blue">GET</span></td><td>/mbooks-1/rest/book/venues/{movieId}</td><td>None</td><td>Venues for a movie</td></tr>
+  <tr><td><span class="badge badge-blue">GET</span></td><td>/mbooks-1/rest/book/seats/{screenId}</td><td>None</td><td>Seat map for a screen</td></tr>
+  <tr><td><span class="badge badge-blue">GET</span></td><td>/mbooks-1/rest/book/payment/clientToken</td><td>None</td><td>Braintree client token</td></tr>
+  <tr><td><span class="badge badge-green">POST</span></td><td>/mbooks-1/rest/book/payment/fullcheckout2</td><td>uuid header</td><td>Full checkout with payment</td></tr>
+  <tr><td><span class="badge badge-blue">GET</span></td><td>/mbooks-1/rest/book/purchases</td><td>uuid header</td><td>User's purchases</td></tr>
+  <tr><td><span class="badge badge-blue">GET</span></td><td>/mbooks-1/rest/book/purchases/tickets?purchaseId=</td><td>None</td><td>Tickets per purchase</td></tr>
+</table>
+
+<h3>simple-service-webapp-quarkus (Image Service)</h3>
+<table>
+  <tr><th>Method</th><th>Endpoint</th><th>Description</th></tr>
+  <tr><td><span class="badge badge-blue">GET</span></td><td>/simple-service-webapp/webapi/myresource</td><td>Health check</td></tr>
+  <tr><td><span class="badge badge-blue">GET</span></td><td>/simple-service-webapp/webapi/myresource/images/{file}</td><td>General image</td></tr>
+  <tr><td><span class="badge badge-blue">GET</span></td><td>/simple-service-webapp/webapi/myresource/images/movies/{file}</td><td>Movie poster</td></tr>
+  <tr><td><span class="badge badge-blue">GET</span></td><td>/simple-service-webapp/webapi/myresource/images/venues/{file}</td><td>Venue photo</td></tr>
+  <tr><td><span class="badge badge-blue">GET</span></td><td>/simple-service-webapp/webapi/myresource/images/profiles/{file}</td><td>Profile picture</td></tr>
+</table>
+</section>
+
+</main>
+</div>
+
+<script>
+// Smooth scroll + active nav highlight
+document.querySelectorAll('nav a').forEach(a => {
+  a.addEventListener('click', e => {
+    e.preventDefault();
+    const target = document.querySelector(a.getAttribute('href'));
+    if (target) target.scrollIntoView({ behavior: 'smooth' });
+    document.querySelectorAll('nav a').forEach(x => x.classList.remove('active'));
+    a.classList.add('active');
+  });
+});
+// Scroll spy
+const sections = document.querySelectorAll('section[id]');
+const navLinks = document.querySelectorAll('nav a');
+window.addEventListener('scroll', () => {
+  let current = '';
+  sections.forEach(s => { if (window.scrollY >= s.offsetTop - 80) current = s.id; });
+  navLinks.forEach(a => {
+    a.classList.remove('active');
+    if (a.getAttribute('href') === '#' + current) a.classList.add('active');
+  });
+});
+</script>
+</body>
+</html>
+

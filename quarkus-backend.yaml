@@ -1,10 +1,26 @@
-# ================================================
-# MySQL bootstrap ConfigMap
-# ================================================
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: cinemas
+---
+# ===================== pictures PVC =====================
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: pictures-pvc
+  namespace: cinemas
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 500Mi
+---
 apiVersion: v1
 kind: ConfigMap
 metadata:
   name: mysql-init
+  namespace: cinemas
 data:
   00-init.sql: |
     CREATE DATABASE IF NOT EXISTS login_;
@@ -14,14 +30,13 @@ data:
     GRANT ALL PRIVILEGES ON book.* TO 'sqluser'@'%';
     FLUSH PRIVILEGES;
 ---
-# ================================================
-# MySQL Deployment + Service
-# ================================================
 apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: mysql
+  namespace: cinemas
 spec:
+  replicas: 1
   selector:
     matchLabels:
       app: mysql
@@ -33,43 +48,43 @@ spec:
       containers:
         - name: mysql
           image: mysql:8.0
+          args: ["--lower-case-table-names=1"]
           env:
             - name: MYSQL_ROOT_PASSWORD
               value: rootpw
           ports:
             - containerPort: 3306
           volumeMounts:
-            - name: mysql-init-volume
-              mountPath: /docker-entrypoint-initdb.d
             - name: mysql-data
               mountPath: /var/lib/mysql
+            - name: mysql-init
+              mountPath: /docker-entrypoint-initdb.d
       volumes:
-        - name: mysql-init-volume
-          configMap:
-            name: mysql-init
         - name: mysql-data
           emptyDir: {}
+        - name: mysql-init
+          configMap:
+            name: mysql-init
 ---
 apiVersion: v1
 kind: Service
 metadata:
   name: mysql
+  namespace: cinemas
 spec:
+  selector:
+    app: mysql
   ports:
     - port: 3306
       targetPort: 3306
-  selector:
-    app: mysql
-
 ---
-# ================================================
-# Zookeeper Deployment + Service
-# ================================================
 apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: zookeeper
+  namespace: cinemas
 spec:
+  replicas: 1
   selector:
     matchLabels:
       app: zookeeper
@@ -93,21 +108,19 @@ apiVersion: v1
 kind: Service
 metadata:
   name: zookeeper
+  namespace: cinemas
 spec:
+  selector:
+    app: zookeeper
   ports:
     - port: 2181
       targetPort: 2181
-  selector:
-    app: zookeeper
-
 ---
-# ================================================
-# Kafka Deployment + Service
-# ================================================
 apiVersion: v1
 kind: ConfigMap
 metadata:
   name: kafka-config
+  namespace: cinemas
 data:
   server.properties: |
     broker.id=1
@@ -122,7 +135,9 @@ apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: kafka
+  namespace: cinemas
 spec:
+  replicas: 1
   selector:
     matchLabels:
       app: kafka
@@ -134,11 +149,11 @@ spec:
       containers:
         - name: kafka
           image: apache/kafka:3.9.0
-          ports:
-            - containerPort: 9092
           command: ["/bin/sh", "-c"]
           args:
             - exec /opt/kafka/bin/kafka-server-start.sh /opt/kafka/config/server.properties
+          ports:
+            - containerPort: 9092
           volumeMounts:
             - name: kafka-config
               mountPath: /opt/kafka/config/server.properties
@@ -152,21 +167,19 @@ apiVersion: v1
 kind: Service
 metadata:
   name: kafka
+  namespace: cinemas
 spec:
+  selector:
+    app: kafka
   ports:
     - port: 9092
       targetPort: 9092
-  selector:
-    app: kafka
-
 ---
-# ================================================
-# Apache HTTPD reverse proxy config
-# ================================================
 apiVersion: v1
 kind: ConfigMap
 metadata:
   name: apache-config
+  namespace: cinemas
 data:
   proxy.conf: |
     ProxyPreserveHost On
@@ -187,114 +200,15 @@ data:
     ProxyPass /mbooks-1/ws ws://mbooks:8080/mbooks-1/ws
     ProxyPassReverse /mbooks-1/ws ws://mbooks:8080/mbooks-1/ws
 
+    ProxyPass /simple-service-webapp http://simple-service-webapp:8085/simple-service-webapp retry=0
+    ProxyPassReverse /simple-service-webapp http://simple-service-webapp:8085/simple-service-webapp
 ---
-# ================================================
-# mbook-quarkus Deployment + Service
-# ================================================
-apiVersion: apps/v1
-kind: Deployment
-metadata:
-  name: mbook
-spec:
-  replicas: 1
-  selector:
-    matchLabels:
-      app: mbook
-  template:
-    metadata:
-      labels:
-        app: mbook
-    spec:
-      containers:
-        - name: mbook
-          image: mbook-quarkus:local
-          imagePullPolicy: IfNotPresent
-          ports:
-            - containerPort: 8888
-          env:
-            - name: QUARKUS_HTTP_PORT
-              value: "8888"
-            - name: QUARKUS_DATASOURCE_DB_KIND
-              value: mysql
-            - name: QUARKUS_DATASOURCE_USERNAME
-              value: sqluser
-            - name: QUARKUS_DATASOURCE_PASSWORD
-              value: sqluserpw
-            - name: QUARKUS_DATASOURCE_JDBC_URL
-              value: jdbc:mysql://mysql:3306/login_
-            - name: BOOTSTRAP_URL
-              value: kafka:9092
-            - name: QUARKUS_OTEL_ENABLED
-              value: "false"
----
-apiVersion: v1
-kind: Service
-metadata:
-  name: mbook
-spec:
-  ports:
-    - port: 8888
-      targetPort: 8888
-  selector:
-    app: mbook
-
----
-# ================================================
-# mbooks-quarkus Deployment + Service
-# ================================================
-apiVersion: apps/v1
-kind: Deployment
-metadata:
-  name: mbooks
-spec:
-  replicas: 1
-  selector:
-    matchLabels:
-      app: mbooks
-  template:
-    metadata:
-      labels:
-        app: mbooks
-    spec:
-      containers:
-        - name: mbooks
-          image: mbooks-quarkus:local
-          imagePullPolicy: IfNotPresent
-          ports:
-            - containerPort: 8080
-          env:
-            - name: QUARKUS_DATASOURCE_DB_KIND
-              value: mysql
-            - name: QUARKUS_DATASOURCE_USERNAME
-              value: sqluser
-            - name: QUARKUS_DATASOURCE_PASSWORD
-              value: sqluserpw
-            - name: QUARKUS_DATASOURCE_JDBC_URL
-              value: jdbc:mysql://mysql:3306/book
-            - name: BOOTSTRAP_URL
-              value: kafka:9092
-            - name: QUARKUS_OTEL_ENABLED
-              value: "false"
----
-apiVersion: v1
-kind: Service
-metadata:
-  name: mbooks
-spec:
-  ports:
-    - port: 8080
-      targetPort: 8080
-  selector:
-    app: mbooks
-
----
-# ================================================
-# dalogin-quarkus Deployment + Service
-# ================================================
+# ===================== dalogin =====================
 apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: dalogin
+  namespace: cinemas
 spec:
   replicas: 1
   selector:
@@ -329,22 +243,166 @@ apiVersion: v1
 kind: Service
 metadata:
   name: dalogin
+  namespace: cinemas
 spec:
+  selector:
+    app: dalogin
   ports:
     - port: 8080
       targetPort: 8080
-  selector:
-    app: dalogin
-
 ---
-# ================================================
-# Apache HTTPD Deployment + Service
-# ================================================
+# ===================== mbook =====================
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: mbook
+  namespace: cinemas
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: mbook
+  template:
+    metadata:
+      labels:
+        app: mbook
+    spec:
+      containers:
+        - name: mbook
+          image: mbook-quarkus:local
+          imagePullPolicy: IfNotPresent
+          ports:
+            - containerPort: 8888
+          env:
+            - name: DB_URL
+              value: jdbc:mysql://mysql:3306/login_
+            - name: QUARKUS_DATASOURCE_DB_KIND
+              value: mysql
+            - name: QUARKUS_DATASOURCE_USERNAME
+              value: sqluser
+            - name: QUARKUS_DATASOURCE_PASSWORD
+              value: sqluserpw
+            - name: QUARKUS_DATASOURCE_JDBC_URL
+              value: jdbc:mysql://mysql:3306/login_
+            - name: BOOTSTRAP_URL
+              value: kafka:9092
+            - name: QUARKUS_OTEL_ENABLED
+              value: "false"
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: mbook
+  namespace: cinemas
+spec:
+  selector:
+    app: mbook
+  ports:
+    - port: 8888
+      targetPort: 8888
+---
+# ===================== mbooks =====================
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: mbooks
+  namespace: cinemas
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: mbooks
+  template:
+    metadata:
+      labels:
+        app: mbooks
+    spec:
+      containers:
+        - name: mbooks
+          image: mbooks-quarkus:local
+          imagePullPolicy: IfNotPresent
+          ports:
+            - containerPort: 8080
+          env:
+            - name: DB_URL_BOOKS
+              value: jdbc:mysql://mysql:3306/book
+            - name: QUARKUS_DATASOURCE_DB_KIND
+              value: mysql
+            - name: QUARKUS_DATASOURCE_USERNAME
+              value: sqluser
+            - name: QUARKUS_DATASOURCE_PASSWORD
+              value: sqluserpw
+            - name: QUARKUS_DATASOURCE_JDBC_URL
+              value: jdbc:mysql://mysql:3306/book
+            - name: BOOTSTRAP_URL
+              value: kafka:9092
+            - name: QUARKUS_OTEL_ENABLED
+              value: "false"
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: mbooks
+  namespace: cinemas
+spec:
+  selector:
+    app: mbooks
+  ports:
+    - port: 8080
+      targetPort: 8080
+---
+# ===================== simple-service-webapp (pictures) =====================
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: simple-service-webapp
+  namespace: cinemas
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: simple-service-webapp
+  template:
+    metadata:
+      labels:
+        app: simple-service-webapp
+    spec:
+      containers:
+        - name: simple-service-webapp
+          image: simple-service-webapp-quarkus:local
+          imagePullPolicy: IfNotPresent
+          ports:
+            - containerPort: 8085
+          env:
+            - name: PICTURES_BASE_DIR
+              value: /pictures
+          volumeMounts:
+            - name: pictures
+              mountPath: /pictures
+      volumes:
+        - name: pictures
+          emptyDir: {}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: simple-service-webapp
+  namespace: cinemas
+spec:
+  selector:
+    app: simple-service-webapp
+  ports:
+    - port: 8085
+      targetPort: 8085
+---
+# ===================== apache reverse proxy =====================
 apiVersion: apps/v1
 kind: Deployment
 metadata:
   name: apache
+  namespace: cinemas
 spec:
+  replicas: 1
   selector:
     matchLabels:
       app: apache
@@ -376,12 +434,12 @@ spec:
         - name: apache-config
           configMap:
             name: apache-config
-
 ---
 apiVersion: v1
 kind: Service
 metadata:
   name: apache
+  namespace: cinemas
 spec:
   type: ClusterIP
   ports:
@@ -389,17 +447,23 @@ spec:
       targetPort: 80
   selector:
     app: apache
-
 ---
+# ===================== ingress =====================
 apiVersion: networking.k8s.io/v1
 kind: Ingress
 metadata:
   name: apache-ingress
+  namespace: cinemas
   annotations:
     nginx.ingress.kubernetes.io/proxy-read-timeout: "3600"
     nginx.ingress.kubernetes.io/proxy-send-timeout: "3600"
+    nginx.ingress.kubernetes.io/ssl-redirect: "true"
 spec:
   ingressClassName: nginx
+  tls:
+    - hosts:
+        - milo.crabdance.com
+      secretName: cinemas-tls
   rules:
     - host: milo.crabdance.com
       http:
@@ -411,4 +475,3 @@ spec:
                 name: apache
                 port:
                   number: 80
-
