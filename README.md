@@ -30,9 +30,6 @@ kubectl -n cinemas exec -i deploy/mysql -- mysql -uroot -prootpw < ../mysql_8/bo
 kubectl -n cinemas exec -i deploy/mysql -- mysql -uroot -prootpw < fix-sprocs.sql
 kubectl -n cinemas exec -i deploy/mysql -- mysql -uroot -prootpw < fix-triggers.sql
 
-# ⚠️  Ensure NO 'login' database exists (only login_)
-kubectl -n cinemas exec deploy/mysql -- mysql -uroot -prootpw -e "DROP DATABASE IF EXISTS login;"
-
 # Run API tests
 python3 test-login.py
 python3 test-login-admin.py
@@ -70,7 +67,6 @@ For the full step-by-step guide, see [README-k8s-local.md](README-k8s-local.md).
 
 ## Database notes
 
-- **Only `login_` should exist** — never create a database named `login` (without underscore).
 - MySQL runs with `--lower-case-table-names=1` for Hibernate entity compatibility.
 - After importing `login.sql`, always apply `fix-sprocs.sql` then `fix-triggers.sql`.
 

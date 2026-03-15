@@ -1,5 +1,2 @@
 # Generated TLS key material — do not commit
 tls/
-
-# Pictures are in the monorepo-level pictures/ folder, not in k8infra
-pictures/
