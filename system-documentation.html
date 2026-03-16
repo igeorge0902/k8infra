@@ -101,6 +101,11 @@
     <li><a href="#auth-flow">Authentication Flow</a></li>
     <li><a href="#booking-flow">Booking &amp; Payment Flow</a></li>
     <li><a href="#booking-hibernate-caching">Booking · Hibernate &amp; Caching</a></li>
+    <li><a href="#entity-relationships">Entity Relationships (Lazy/Eager)</a></li>
+    <li><a href="#booking-entity-walk">Booking Entity Walk</a></li>
+    <li><a href="#admin-venue-flow">Admin Venue Insertion</a></li>
+    <li><a href="#mbook-entities">mbook Entities (login_)</a></li>
+    <li><a href="#service-interaction">Service Interaction Map</a></li>
     <li><a href="#realtime">Realtime / Kafka + WebSocket</a></li>
     <li><a href="#registration-flow">Registration &amp; Voucher Flow</a></li>
     <li><a href="#password-reset-flow">Password Reset Flow</a></li>
@@ -766,6 +771,656 @@
   <tr><td>Purchase lookup</td><td><code>mbooks-quarkus/…/booking/PurchaseDAO.java</code></td></tr>
   <tr><td>Entity definitions</td><td><code>mbooks-quarkus/…/api/</code> — Movie, Venues, Location, Screen, ScreeningDates, Seats, Ticket, Purchase</td></tr>
 </table>
+</section>
+
+<!-- ──────── HIBERNATE ENTITY RELATIONSHIPS ──────── -->
+<section id="entity-relationships">
+<h2>Hibernate Entity Relationships — Lazy vs Eager Loading</h2>
+<p>The <code>book</code> schema entities form a deeply connected graph. The choice of <code>FetchType.LAZY</code> vs <code>FetchType.EAGER</code> on each relationship directly impacts which SQL queries fire during movie browsing, seat selection, and purchase history. This section maps every relationship and explains why each fetch strategy was chosen.</p>
+
+<h3>Entity Relationship Diagram with Fetch Types</h3>
+<div class="diagram-container">
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 960 700" font-family="Arial,sans-serif" font-size="12">
+  <rect width="960" height="700" fill="#f8f9fa" rx="12"/>
+  <defs>
+    <marker id="eag" markerWidth="10" markerHeight="7" refX="10" refY="3.5" orient="auto"><path d="M0,0 L10,3.5 L0,7 Z" fill="#2e7d32"/></marker>
+    <marker id="laz" markerWidth="10" markerHeight="7" refX="10" refY="3.5" orient="auto"><path d="M0,0 L10,3.5 L0,7 Z" fill="#e65100"/></marker>
+    <marker id="gry" markerWidth="10" markerHeight="7" refX="10" refY="3.5" orient="auto"><path d="M0,0 L10,3.5 L0,7 Z" fill="#999"/></marker>
+  </defs>
+
+  <!-- Legend -->
+  <rect x="20" y="15" width="320" height="60" rx="6" fill="#fff" stroke="#ddd"/>
+  <text x="30" y="35" fill="#333" font-weight="bold" font-size="13">Legend</text>
+  <line x1="30" y1="48" x2="80" y2="48" stroke="#2e7d32" stroke-width="3" marker-end="url(#eag)"/>
+  <text x="90" y="52" fill="#2e7d32" font-size="11" font-weight="bold">EAGER fetch</text>
+  <line x1="170" y1="48" x2="220" y2="48" stroke="#e65100" stroke-width="3" stroke-dasharray="8 4" marker-end="url(#laz)"/>
+  <text x="230" y="52" fill="#e65100" font-size="11" font-weight="bold">LAZY fetch</text>
+  <text x="30" y="68" fill="#888" font-size="10">@Cacheable entities have a green header</text>
+
+  <!-- Movie -->
+  <rect x="30" y="100" width="220" height="140" rx="8" fill="#fff" stroke="#f57f17" stroke-width="2"/>
+  <rect x="30" y="100" width="220" height="28" rx="8" fill="#e8f5e9" stroke="#2e7d32" stroke-width="1"/>
+  <rect x="30" y="118" width="220" height="10" fill="#fff"/>
+  <text x="140" y="120" text-anchor="middle" fill="#2e7d32" font-weight="bold" font-size="14">Movie ⭐ @Cacheable</text>
+  <text x="40" y="145" fill="#333" font-size="11">🔑 movieId INT (PK, AUTO)</text>
+  <text x="40" y="160" fill="#333" font-size="11">name, detail, category</text>
+  <text x="40" y="175" fill="#333" font-size="11">thumbnail_picture, large_picture</text>
+  <text x="40" y="190" fill="#333" font-size="11">iMDB_url</text>
+  <text x="40" y="210" fill="#e65100" font-size="10" font-style="italic">screens: List&lt;Screen&gt; → LAZY</text>
+  <text x="40" y="225" fill="#888" font-size="9">(safe for pagination — no joins on browse)</text>
+
+  <!-- Screen -->
+  <rect x="350" y="100" width="230" height="145" rx="8" fill="#fff" stroke="#2e7d32" stroke-width="2"/>
+  <rect x="350" y="100" width="230" height="28" rx="8" fill="#f5f5f5" stroke="#999" stroke-width="1"/>
+  <rect x="350" y="118" width="230" height="10" fill="#fff"/>
+  <text x="465" y="120" text-anchor="middle" fill="#333" font-weight="bold" font-size="14">Screen</text>
+  <text x="360" y="145" fill="#333" font-size="11">🔑 screenId VARCHAR (PK)</text>
+  <text x="360" y="160" fill="#333" font-size="11">seats INT</text>
+  <text x="360" y="178" fill="#2e7d32" font-size="10" font-weight="bold">movie → Movie EAGER</text>
+  <text x="360" y="193" fill="#2e7d32" font-size="10" font-weight="bold">screeningDates → EAGER</text>
+  <text x="360" y="208" fill="#2e7d32" font-size="10" font-weight="bold">seat: List&lt;Seats&gt; → EAGER ⚠️</text>
+  <text x="360" y="225" fill="#888" font-size="9">(loads ALL seats with every Screen)</text>
+
+  <!-- ScreeningDates -->
+  <rect x="680" y="100" width="240" height="120" rx="8" fill="#fff" stroke="#7b1fa2" stroke-width="2"/>
+  <rect x="680" y="100" width="240" height="28" rx="8" fill="#f5f5f5" stroke="#999" stroke-width="1"/>
+  <rect x="680" y="118" width="240" height="10" fill="#fff"/>
+  <text x="800" y="120" text-anchor="middle" fill="#333" font-weight="bold" font-size="14">ScreeningDates</text>
+  <text x="690" y="145" fill="#333" font-size="11">🔑 screeningDatesId INT (PK)</text>
+  <text x="690" y="160" fill="#333" font-size="11">screeningDate DATETIME</text>
+  <text x="690" y="175" fill="#333" font-size="11">movieId INT</text>
+  <text x="690" y="193" fill="#2e7d32" font-size="10" font-weight="bold">venues → Venues EAGER (ALL)</text>
+
+  <!-- Venues -->
+  <rect x="680" y="280" width="240" height="135" rx="8" fill="#fff" stroke="#c62828" stroke-width="2"/>
+  <rect x="680" y="280" width="240" height="28" rx="8" fill="#e8f5e9" stroke="#2e7d32" stroke-width="1"/>
+  <rect x="680" y="298" width="240" height="10" fill="#fff"/>
+  <text x="800" y="300" text-anchor="middle" fill="#2e7d32" font-weight="bold" font-size="14">Venues ⭐ @Cacheable</text>
+  <text x="690" y="325" fill="#333" font-size="11">🔑 venuesId INT (PK, AUTO)</text>
+  <text x="690" y="340" fill="#333" font-size="11">name, address, contact</text>
+  <text x="690" y="355" fill="#333" font-size="11">venues_picture</text>
+  <text x="690" y="373" fill="#2e7d32" font-size="10" font-weight="bold">screen → Screen EAGER (ALL) ⚠️</text>
+  <text x="690" y="388" fill="#2e7d32" font-size="10" font-weight="bold">location → Location EAGER</text>
+  <text x="690" y="403" fill="#888" font-size="9">(Venues→Screen→Seats always loaded)</text>
+
+  <!-- Location -->
+  <rect x="680" y="470" width="240" height="110" rx="8" fill="#fff" stroke="#4a148c" stroke-width="2"/>
+  <rect x="680" y="470" width="240" height="28" rx="8" fill="#e8f5e9" stroke="#2e7d32" stroke-width="1"/>
+  <rect x="680" y="488" width="240" height="10" fill="#fff"/>
+  <text x="800" y="490" text-anchor="middle" fill="#2e7d32" font-weight="bold" font-size="14">Location ⭐ @Cacheable</text>
+  <text x="690" y="515" fill="#333" font-size="11">🔑 locationId INT (PK, AUTO)</text>
+  <text x="690" y="530" fill="#333" font-size="11">name, formatted_address</text>
+  <text x="690" y="545" fill="#333" font-size="11">latitude, longitude, thumbnail</text>
+  <text x="690" y="563" fill="#e65100" font-size="10" font-style="italic">venues: List&lt;Venues&gt; → LAZY</text>
+
+  <!-- Seats -->
+  <rect x="350" y="310" width="220" height="130" rx="8" fill="#fff" stroke="#00838f" stroke-width="2"/>
+  <rect x="350" y="310" width="220" height="28" rx="8" fill="#fce4ec" stroke="#c62828" stroke-width="1"/>
+  <rect x="350" y="328" width="220" height="10" fill="#fff"/>
+  <text x="460" y="330" text-anchor="middle" fill="#c62828" font-weight="bold" font-size="14">Seats ❌ NOT cached</text>
+  <text x="360" y="355" fill="#333" font-size="11">🔑 seatId INT (PK, AUTO)</text>
+  <text x="360" y="370" fill="#333" font-size="11">seatNumber, seatRow</text>
+  <text x="360" y="385" fill="#333" font-size="11">isReserved VARCHAR</text>
+  <text x="360" y="400" fill="#333" font-size="11">price INT, tax DOUBLE</text>
+  <text x="360" y="418" fill="#2e7d32" font-size="10" font-weight="bold">screen → Screen EAGER</text>
+  <text x="360" y="432" fill="#888" font-size="9">(always fresh from DB for bookings)</text>
+
+  <!-- Ticket -->
+  <rect x="30" y="310" width="220" height="150" rx="8" fill="#fff" stroke="#283593" stroke-width="2"/>
+  <rect x="30" y="310" width="220" height="28" rx="8" fill="#e8f5e9" stroke="#2e7d32" stroke-width="1"/>
+  <rect x="30" y="328" width="220" height="10" fill="#fff"/>
+  <text x="140" y="330" text-anchor="middle" fill="#2e7d32" font-weight="bold" font-size="14">Ticket ⭐ @Cacheable</text>
+  <text x="40" y="355" fill="#333" font-size="11">🔑 ticketId INT (PK, AUTO)</text>
+  <text x="40" y="370" fill="#333" font-size="11">price INT, tax DOUBLE</text>
+  <text x="40" y="385" fill="#333" font-size="11">seats_seatNumber, seats_seatRow</text>
+  <text x="40" y="403" fill="#2e7d32" font-size="10" font-weight="bold">screen → Screen EAGER</text>
+  <text x="40" y="418" fill="#2e7d32" font-size="10" font-weight="bold">seats → Seats EAGER</text>
+  <text x="40" y="433" fill="#e65100" font-size="10" font-style="italic">purchase → Purchase LAZY</text>
+  <text x="40" y="448" fill="#888" font-size="9">(does NOT auto-load parent purchase)</text>
+
+  <!-- Purchase -->
+  <rect x="30" y="520" width="220" height="140" rx="8" fill="#fff" stroke="#e65100" stroke-width="2"/>
+  <rect x="30" y="520" width="220" height="28" rx="8" fill="#fce4ec" stroke="#c62828" stroke-width="1"/>
+  <rect x="30" y="538" width="220" height="10" fill="#fff"/>
+  <text x="140" y="540" text-anchor="middle" fill="#c62828" font-weight="bold" font-size="14">Purchase ❌ NOT cached</text>
+  <text x="40" y="565" fill="#333" font-size="11">🔑 purchaseId INT (PK, AUTO)</text>
+  <text x="40" y="580" fill="#333" font-size="11">uuid, orderId</text>
+  <text x="40" y="595" fill="#333" font-size="11">TIME_ TIMESTAMP</text>
+  <text x="40" y="610" fill="#333" font-size="11">braintree_customerId</text>
+  <text x="40" y="628" fill="#2e7d32" font-size="10" font-weight="bold">ticket: List&lt;Ticket&gt; → EAGER ⚠️</text>
+  <text x="40" y="643" fill="#888" font-size="9">@BatchSize(10) — loads ALL tickets</text>
+
+  <!-- Relationship arrows -->
+  <!-- Movie → Screen (LAZY) -->
+  <line x1="250" y1="170" x2="348" y2="170" stroke="#e65100" stroke-width="3" stroke-dasharray="8 4" marker-end="url(#laz)"/>
+  <text x="299" y="163" text-anchor="middle" fill="#e65100" font-weight="bold" font-size="10">1:N LAZY</text>
+
+  <!-- Screen → Movie (EAGER) -->
+  <line x1="350" y1="145" x2="252" y2="145" stroke="#2e7d32" stroke-width="3" marker-end="url(#eag)"/>
+  <text x="301" y="140" text-anchor="middle" fill="#2e7d32" font-weight="bold" font-size="10">N:1 EAGER</text>
+
+  <!-- Screen → ScreeningDates (EAGER) -->
+  <line x1="580" y1="150" x2="678" y2="150" stroke="#2e7d32" stroke-width="3" marker-end="url(#eag)"/>
+  <text x="629" y="143" text-anchor="middle" fill="#2e7d32" font-weight="bold" font-size="10">1:1 EAGER</text>
+
+  <!-- ScreeningDates → Venues (EAGER) -->
+  <line x1="800" y1="220" x2="800" y2="278" stroke="#2e7d32" stroke-width="3" marker-end="url(#eag)"/>
+  <text x="815" y="250" fill="#2e7d32" font-weight="bold" font-size="10">1:1 EAGER</text>
+
+  <!-- Venues → Screen (EAGER) -->
+  <line x1="680" y1="370" x2="582" y2="210" stroke="#2e7d32" stroke-width="2" marker-end="url(#eag)"/>
+  <text x="620" y="295" fill="#2e7d32" font-size="9">1:1 EAGER (ALL)</text>
+
+  <!-- Venues → Location (EAGER) -->
+  <line x1="800" y1="415" x2="800" y2="468" stroke="#2e7d32" stroke-width="3" marker-end="url(#eag)"/>
+  <text x="815" y="445" fill="#2e7d32" font-weight="bold" font-size="10">N:1 EAGER</text>
+
+  <!-- Location → Venues (LAZY) -->
+  <line x1="730" y1="470" x2="730" y2="417" stroke="#e65100" stroke-width="2" stroke-dasharray="8 4" marker-end="url(#laz)"/>
+  <text x="710" y="445" fill="#e65100" font-size="9" text-anchor="end">1:N LAZY</text>
+
+  <!-- Screen → Seats (EAGER) -->
+  <line x1="460" y1="245" x2="460" y2="308" stroke="#2e7d32" stroke-width="3" marker-end="url(#eag)"/>
+  <text x="473" y="280" fill="#2e7d32" font-weight="bold" font-size="10">1:N EAGER ⚠️</text>
+
+  <!-- Seats → Screen (EAGER) -->
+  <line x1="430" y1="310" x2="430" y2="247" stroke="#2e7d32" stroke-width="2" marker-end="url(#eag)"/>
+  <text x="415" y="280" fill="#2e7d32" font-size="9" text-anchor="end">N:1</text>
+
+  <!-- Ticket → Screen (EAGER) -->
+  <line x1="250" y1="400" x2="348" y2="365" stroke="#2e7d32" stroke-width="2" marker-end="url(#eag)"/>
+  <text x="290" y="390" fill="#2e7d32" font-size="9">1:1 EAGER</text>
+
+  <!-- Ticket → Seats (EAGER) -->
+  <line x1="250" y1="415" x2="348" y2="395" stroke="#2e7d32" stroke-width="2" marker-end="url(#eag)"/>
+  <text x="290" y="418" fill="#2e7d32" font-size="9">N:1 EAGER</text>
+
+  <!-- Ticket → Purchase (LAZY) -->
+  <line x1="140" y1="460" x2="140" y2="518" stroke="#e65100" stroke-width="3" stroke-dasharray="8 4" marker-end="url(#laz)"/>
+  <text x="155" y="490" fill="#e65100" font-weight="bold" font-size="10">N:1 LAZY</text>
+
+  <!-- Purchase → Ticket (EAGER) -->
+  <line x1="110" y1="520" x2="110" y2="462" stroke="#2e7d32" stroke-width="3" marker-end="url(#eag)"/>
+  <text x="70" y="490" fill="#2e7d32" font-weight="bold" font-size="10">1:N EAGER ⚠️</text>
+</svg>
+</div>
+
+<h3>Fetch Strategy Summary Table</h3>
+<table>
+  <tr><th>Owner Entity</th><th>Relationship</th><th>Target</th><th>Fetch</th><th>Cascade</th><th>Impact</th></tr>
+  <tr><td>Movie</td><td>@OneToMany screens</td><td>Screen</td><td><span class="badge badge-orange">LAZY</span></td><td>—</td><td>Movie browsing does NOT load screens. Safe for pagination.</td></tr>
+  <tr><td>Screen</td><td>@ManyToOne movie</td><td>Movie</td><td><span class="badge badge-green">EAGER</span></td><td>PERSIST, REFRESH</td><td>Loading a screen always loads its movie (for purchase history).</td></tr>
+  <tr><td>Screen</td><td>@OneToOne screeningDates</td><td>ScreeningDates</td><td><span class="badge badge-green">EAGER</span></td><td>ALL</td><td>Screen always loads its screening date for venue/date display.</td></tr>
+  <tr><td>Screen</td><td>@OneToMany seat</td><td>Seats</td><td><span class="badge badge-red">EAGER ⚠️</span></td><td>ALL</td><td>Every Screen load pulls ALL its seats. Intentional for seat-map rendering but heavy for Ticket→Screen navigation.</td></tr>
+  <tr><td>Seats</td><td>@ManyToOne screen</td><td>Screen</td><td><span class="badge badge-green">EAGER</span></td><td>—</td><td>Bidirectional EAGER with Screen.seat → potential JSON recursion.</td></tr>
+  <tr><td>ScreeningDates</td><td>@OneToOne venues</td><td>Venues</td><td><span class="badge badge-green">EAGER</span></td><td>ALL</td><td>Always loads venue info (name, picture, location).</td></tr>
+  <tr><td>Venues</td><td>@OneToOne screen</td><td>Screen</td><td><span class="badge badge-red">EAGER ⚠️</span></td><td>ALL</td><td>Venue→Screen→all Seats always loaded. Admin inserts cascade.</td></tr>
+  <tr><td>Venues</td><td>@ManyToOne location</td><td>Location</td><td><span class="badge badge-green">EAGER</span></td><td>PERSIST, REFRESH</td><td>Venue always loads its location (map coordinates).</td></tr>
+  <tr><td>Location</td><td>@OneToMany venues</td><td>Venues</td><td><span class="badge badge-orange">LAZY</span></td><td>—</td><td>Location listing is lightweight. Venues fetched separately.</td></tr>
+  <tr><td>Ticket</td><td>@OneToOne screen</td><td>Screen</td><td><span class="badge badge-green">EAGER</span></td><td>—</td><td>Ticket loads screen → movie + seats + dates.</td></tr>
+  <tr><td>Ticket</td><td>@ManyToOne seats</td><td>Seats</td><td><span class="badge badge-green">EAGER</span></td><td>—</td><td>Ticket knows its specific seat.</td></tr>
+  <tr><td>Ticket</td><td>@ManyToOne purchase</td><td>Purchase</td><td><span class="badge badge-orange">LAZY</span></td><td>—</td><td>Ticket does NOT auto-load its parent purchase.</td></tr>
+  <tr><td>Purchase</td><td>@OneToMany ticket</td><td>Ticket</td><td><span class="badge badge-red">EAGER ⚠️</span></td><td>PERSIST, REFRESH</td><td>Purchase loads ALL tickets → each loads Screen → all Seats. @BatchSize(10).</td></tr>
+</table>
+</section>
+
+<!-- ──────── MOVIE BOOKING USE-CASE ENTITY WALK ──────── -->
+<section id="booking-entity-walk">
+<h2>Use-Case: Movie Selection → Ticket Booking — Entity Walk</h2>
+<p>This diagram traces exactly which entities are loaded (and from where — cache or DB) as a user navigates from movie browsing through to seat reservation.</p>
+
+<div class="diagram-container">
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 960 680" font-family="Arial,sans-serif" font-size="12">
+  <rect width="960" height="680" fill="#f8f9fa" rx="12"/>
+  <defs>
+    <marker id="bw" markerWidth="8" markerHeight="6" refX="8" refY="3" orient="auto"><path d="M0,0 L8,3 L0,6 Z" fill="#1976d2"/></marker>
+    <marker id="db" markerWidth="8" markerHeight="6" refX="8" refY="3" orient="auto"><path d="M0,0 L8,3 L0,6 Z" fill="#c62828"/></marker>
+    <marker id="ca" markerWidth="8" markerHeight="6" refX="8" refY="3" orient="auto"><path d="M0,0 L8,3 L0,6 Z" fill="#2e7d32"/></marker>
+  </defs>
+
+  <!-- Step 1: Browse Movies -->
+  <rect x="20" y="20" width="280" height="95" rx="8" fill="#e3f2fd" stroke="#1976d2" stroke-width="2"/>
+  <text x="160" y="42" text-anchor="middle" fill="#1976d2" font-weight="bold" font-size="14">Step 1: Browse Movies</text>
+  <text x="30" y="60" fill="#555" font-size="11">DAO.getAllMovies() → HQL "from Movie"</text>
+  <text x="30" y="76" fill="#2e7d32" font-size="11" font-weight="bold">✅ Query cache HIT (movies region)</text>
+  <text x="30" y="92" fill="#555" font-size="11">Movie.screens is LAZY → no Screen joins</text>
+  <text x="30" y="106" fill="#888" font-size="10">Returns: [Movie] (flat list, paginated)</text>
+
+  <rect x="320" y="20" width="200" height="95" rx="6" fill="#fff" stroke="#ddd"/>
+  <text x="325" y="40" fill="#333" font-weight="bold" font-size="11">Entities loaded:</text>
+  <rect x="330" y="48" width="80" height="22" rx="4" fill="#e8f5e9" stroke="#2e7d32"/>
+  <text x="370" y="63" text-anchor="middle" fill="#2e7d32" font-size="11">Movie ✅</text>
+  <text x="325" y="88" fill="#888" font-size="10">Source: L2 cache or DB</text>
+  <text x="325" y="104" fill="#888" font-size="10">SQL: 1 query (+ 0 sub-queries)</text>
+
+  <!-- Step 2: Select Movie → Venues -->
+  <rect x="20" y="140" width="280" height="110" rx="8" fill="#fff8e1" stroke="#f57f17" stroke-width="2"/>
+  <text x="160" y="162" text-anchor="middle" fill="#f57f17" font-weight="bold" font-size="14">Step 2: Venues for Movie</text>
+  <text x="30" y="180" fill="#555" font-size="11">DAO.getVenuesForMovie(movieId)</text>
+  <text x="30" y="196" fill="#555" font-size="11">HQL: Venues→Screen→Movie join</text>
+  <text x="30" y="212" fill="#2e7d32" font-size="11" font-weight="bold">✅ Query cache HIT (venues region)</text>
+  <text x="30" y="228" fill="#555" font-size="11">Venues.location EAGER → auto-loaded</text>
+  <text x="30" y="244" fill="#555" font-size="11">Venues.screen EAGER → Screen auto-loaded</text>
+
+  <rect x="320" y="140" width="300" height="110" rx="6" fill="#fff" stroke="#ddd"/>
+  <text x="325" y="160" fill="#333" font-weight="bold" font-size="11">Entities loaded (EAGER chain):</text>
+  <rect x="330" y="168" width="65" height="22" rx="4" fill="#e8f5e9" stroke="#2e7d32"/>
+  <text x="362" y="183" text-anchor="middle" fill="#2e7d32" font-size="10">Venues</text>
+  <text x="400" y="183" fill="#999" font-size="12">→</text>
+  <rect x="410" y="168" width="60" height="22" rx="4" fill="#f5f5f5" stroke="#999"/>
+  <text x="440" y="183" text-anchor="middle" fill="#333" font-size="10">Screen</text>
+  <text x="475" y="183" fill="#999" font-size="12">→</text>
+  <rect x="485" y="168" width="55" height="22" rx="4" fill="#e8f5e9" stroke="#2e7d32"/>
+  <text x="512" y="183" text-anchor="middle" fill="#2e7d32" font-size="10">Movie</text>
+  <rect x="330" y="198" width="65" height="22" rx="4" fill="#e8f5e9" stroke="#2e7d32"/>
+  <text x="362" y="213" text-anchor="middle" fill="#2e7d32" font-size="10">Venues</text>
+  <text x="400" y="213" fill="#999" font-size="12">→</text>
+  <rect x="410" y="198" width="70" height="22" rx="4" fill="#e8f5e9" stroke="#2e7d32"/>
+  <text x="445" y="213" text-anchor="middle" fill="#2e7d32" font-size="10">Location</text>
+  <text x="325" y="238" fill="#888" font-size="10">Screen→ScreeningDates also EAGER loaded</text>
+
+  <!-- Step 3: Screening Dates -->
+  <rect x="20" y="275" width="280" height="90" rx="8" fill="#f3e5f5" stroke="#7b1fa2" stroke-width="2"/>
+  <text x="160" y="297" text-anchor="middle" fill="#7b1fa2" font-weight="bold" font-size="14">Step 3: Screening Dates</text>
+  <text x="30" y="315" fill="#555" font-size="11">DAO.getScreeningDatesForMovieOnVenue()</text>
+  <text x="30" y="331" fill="#555" font-size="11">HQL: ScreeningDates→Venues→Location join</text>
+  <text x="30" y="347" fill="#c62828" font-size="11" font-weight="bold">❌ NOT cached (direct DB query)</text>
+  <text x="30" y="360" fill="#888" font-size="10">ScreeningDates.venues EAGER → Venue auto-loaded</text>
+
+  <rect x="320" y="275" width="300" height="90" rx="6" fill="#fff" stroke="#ddd"/>
+  <text x="325" y="295" fill="#333" font-weight="bold" font-size="11">Entities loaded:</text>
+  <rect x="330" y="303" width="100" height="22" rx="4" fill="#f5f5f5" stroke="#999"/>
+  <text x="380" y="318" text-anchor="middle" fill="#333" font-size="10">ScreeningDates</text>
+  <text x="435" y="318" fill="#999" font-size="12">→</text>
+  <rect x="445" y="303" width="65" height="22" rx="4" fill="#e8f5e9" stroke="#2e7d32"/>
+  <text x="477" y="318" text-anchor="middle" fill="#2e7d32" font-size="10">Venues</text>
+  <text x="515" y="318" fill="#999" font-size="12">→</text>
+  <rect x="525" y="303" width="70" height="22" rx="4" fill="#e8f5e9" stroke="#2e7d32"/>
+  <text x="560" y="318" text-anchor="middle" fill="#2e7d32" font-size="10">Location</text>
+  <text x="325" y="352" fill="#888" font-size="10">Source: always DB (freshness guarantee)</text>
+
+  <!-- Step 4: Seat Map -->
+  <rect x="20" y="390" width="280" height="100" rx="8" fill="#e0f7fa" stroke="#00838f" stroke-width="2"/>
+  <text x="160" y="412" text-anchor="middle" fill="#00838f" font-weight="bold" font-size="14">Step 4: Seat Map</text>
+  <text x="30" y="430" fill="#555" font-size="11">DAO.getSeatsForScreening(screeningDateId)</text>
+  <text x="30" y="446" fill="#555" font-size="11">HQL: ScreeningDates→Venues→Screen→Seats</text>
+  <text x="30" y="462" fill="#c62828" font-size="11" font-weight="bold">❌ NOT cached (seat freshness critical)</text>
+  <text x="30" y="478" fill="#555" font-size="11">Screen.seat EAGER → full seat grid loaded</text>
+
+  <rect x="320" y="390" width="300" height="100" rx="6" fill="#fff" stroke="#ddd"/>
+  <text x="325" y="410" fill="#333" font-weight="bold" font-size="11">Full entity chain loaded:</text>
+  <text x="325" y="430" fill="#555" font-size="10">ScreeningDates → Venues → Screen → [Seats]</text>
+  <text x="325" y="448" fill="#555" font-size="10">Each Seat has: seatNumber, seatRow, isReserved</text>
+  <text x="325" y="466" fill="#c62828" font-size="10" font-weight="bold">Seats are NEVER cached (always from DB)</text>
+  <text x="325" y="480" fill="#888" font-size="10">This is the most SQL-intensive step</text>
+
+  <!-- Step 5: Reserve Seats -->
+  <rect x="20" y="515" width="280" height="105" rx="8" fill="#e8f5e9" stroke="#2e7d32" stroke-width="2"/>
+  <text x="160" y="537" text-anchor="middle" fill="#2e7d32" font-weight="bold" font-size="14">Step 5: Reserve Seats</text>
+  <text x="30" y="555" fill="#555" font-size="11">DAO.bookTickets(screeningDateId, seats,</text>
+  <text x="30" y="568" fill="#555" font-size="11">  uuid, orderId)</text>
+  <text x="30" y="586" fill="#c62828" font-size="11" font-weight="bold">🔒 PESSIMISTIC_WRITE on each Seat</text>
+  <text x="30" y="602" fill="#555" font-size="11">Creates: Purchase + N × Ticket</text>
+  <text x="30" y="615" fill="#555" font-size="11">Updates: Seats.isReserved = "1"</text>
+
+  <rect x="320" y="515" width="300" height="105" rx="6" fill="#fff" stroke="#ddd"/>
+  <text x="325" y="535" fill="#333" font-weight="bold" font-size="11">Write operations:</text>
+  <text x="325" y="555" fill="#555" font-size="10">1. INSERT Purchase (uuid, orderId, TIME_)</text>
+  <text x="325" y="573" fill="#555" font-size="10">2. SELECT ... FOR UPDATE on each Seat row</text>
+  <text x="325" y="591" fill="#555" font-size="10">3. INSERT Ticket (per seat, linked to Purchase)</text>
+  <text x="325" y="609" fill="#555" font-size="10">4. UPDATE Seats SET isReserved='1'</text>
+
+  <!-- Step 6: Post-booking refresh -->
+  <rect x="20" y="640" width="600" height="40" rx="6" fill="#fce4ec" stroke="#c62828"/>
+  <text x="320" y="665" text-anchor="middle" fill="#c62828" font-weight="bold" font-size="12">Step 6: Post-Booking → DAO.updatetedSeats() reloads seat map from DB (bypasses all caches)</text>
+
+  <!-- Cache/DB indicators on right -->
+  <rect x="660" y="20" width="280" height="300" rx="8" fill="#fff" stroke="#ddd"/>
+  <text x="670" y="42" fill="#333" font-weight="bold" font-size="13">Cache Interactions Per Step</text>
+
+  <text x="670" y="68" fill="#1976d2" font-weight="bold" font-size="11">Step 1 — Browse Movies:</text>
+  <rect x="670" y="75" width="12" height="12" rx="2" fill="#2e7d32"/>
+  <text x="690" y="86" fill="#555" font-size="10">L2 entity cache: Movie ✅</text>
+  <rect x="670" y="93" width="12" height="12" rx="2" fill="#2e7d32"/>
+  <text x="690" y="104" fill="#555" font-size="10">Query cache: movies region ✅</text>
+
+  <text x="670" y="126" fill="#f57f17" font-weight="bold" font-size="11">Step 2 — Venues:</text>
+  <rect x="670" y="133" width="12" height="12" rx="2" fill="#2e7d32"/>
+  <text x="690" y="144" fill="#555" font-size="10">L2: Venues, Location ✅</text>
+  <rect x="670" y="151" width="12" height="12" rx="2" fill="#2e7d32"/>
+  <text x="690" y="162" fill="#555" font-size="10">Query cache: venues region ✅</text>
+
+  <text x="670" y="184" fill="#7b1fa2" font-weight="bold" font-size="11">Step 3 — Dates:</text>
+  <rect x="670" y="191" width="12" height="12" rx="2" fill="#c62828"/>
+  <text x="690" y="202" fill="#555" font-size="10">Always from DB ❌</text>
+
+  <text x="670" y="224" fill="#00838f" font-weight="bold" font-size="11">Step 4 — Seats:</text>
+  <rect x="670" y="231" width="12" height="12" rx="2" fill="#c62828"/>
+  <text x="690" y="242" fill="#555" font-size="10">Always from DB ❌ (freshness)</text>
+
+  <text x="670" y="264" fill="#2e7d32" font-weight="bold" font-size="11">Step 5 — Reserve:</text>
+  <rect x="670" y="271" width="12" height="12" rx="2" fill="#c62828"/>
+  <text x="690" y="282" fill="#555" font-size="10">DB write + lock (no cache read)</text>
+  <rect x="670" y="289" width="12" height="12" rx="2" fill="#f57f17"/>
+  <text x="690" y="300" fill="#555" font-size="10">Ticket → L2 on commit</text>
+  <text x="690" y="314" fill="#555" font-size="10">Timestamps bumped → queries invalidated</text>
+</svg>
+</div>
+</section>
+
+<!-- ──────── ADMIN VENUE INSERTION FLOW ──────── -->
+<section id="admin-venue-flow">
+<h2>Use-Case: Admin Inserts a New Venue + Screen</h2>
+<p>When an admin adds a new movie screening at a venue, a complex cascade of entity creation and cache invalidation occurs. This diagram traces the full flow through entity persistence and Hibernate cascade effects.</p>
+
+<div class="diagram-container">
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 960 600" font-family="Arial,sans-serif" font-size="12">
+  <rect width="960" height="600" fill="#f8f9fa" rx="12"/>
+  <defs>
+    <marker id="av" markerWidth="8" markerHeight="6" refX="8" refY="3" orient="auto"><path d="M0,0 L8,3 L0,6 Z" fill="#666"/></marker>
+    <marker id="ac" markerWidth="8" markerHeight="6" refX="8" refY="3" orient="auto"><path d="M0,0 L8,3 L0,6 Z" fill="#c62828"/></marker>
+  </defs>
+
+  <!-- Title -->
+  <text x="480" y="25" text-anchor="middle" fill="#333" font-weight="bold" font-size="16">Admin Add Screen Flow: Entity Creation Cascade</text>
+
+  <!-- Input -->
+  <rect x="20" y="45" width="200" height="100" rx="8" fill="#e3f2fd" stroke="#1976d2" stroke-width="2"/>
+  <text x="120" y="65" text-anchor="middle" fill="#1976d2" font-weight="bold">Admin Input</text>
+  <text x="30" y="82" fill="#555" font-size="10">movie: "The Godfather"</text>
+  <text x="30" y="95" fill="#555" font-size="10">venue: "Sydney CBD"</text>
+  <text x="30" y="108" fill="#555" font-size="10">date: "2026-04-15 19:00"</text>
+  <text x="30" y="121" fill="#555" font-size="10">rows: 5, seatsPerRow: 6</text>
+  <text x="30" y="134" fill="#555" font-size="10">screeningId: "SCR-2026-042"</text>
+
+  <!-- Controller -->
+  <rect x="260" y="45" width="180" height="50" rx="6" fill="#e8f5e9" stroke="#2e7d32" stroke-width="2"/>
+  <text x="350" y="70" text-anchor="middle" fill="#2e7d32" font-weight="bold">BookController</text>
+  <text x="350" y="88" text-anchor="middle" fill="#555" font-size="10">addScreen()</text>
+  <line x1="220" y1="80" x2="258" y2="70" stroke="#666" stroke-width="1.5" marker-end="url(#av)"/>
+
+  <!-- BookingHandlerImpl -->
+  <rect x="480" y="45" width="180" height="50" rx="6" fill="#fff8e1" stroke="#f57f17" stroke-width="2"/>
+  <text x="570" y="70" text-anchor="middle" fill="#f57f17" font-weight="bold">BookingHandlerImpl</text>
+  <text x="570" y="88" text-anchor="middle" fill="#555" font-size="10">insertNewScreening()</text>
+  <line x1="440" y1="70" x2="478" y2="70" stroke="#666" stroke-width="1.5" marker-end="url(#av)"/>
+
+  <!-- DAO -->
+  <rect x="700" y="45" width="180" height="50" rx="6" fill="#e8eaf6" stroke="#283593" stroke-width="2"/>
+  <text x="790" y="70" text-anchor="middle" fill="#283593" font-weight="bold">DAO.insertNewScreen()</text>
+  <text x="790" y="88" text-anchor="middle" fill="#555" font-size="10">⚡ Opens SEPARATE session</text>
+  <line x1="660" y1="70" x2="698" y2="70" stroke="#666" stroke-width="1.5" marker-end="url(#av)"/>
+
+  <!-- Session note -->
+  <rect x="700" y="100" width="230" height="30" rx="4" fill="#fce4ec" stroke="#c62828"/>
+  <text x="815" y="119" text-anchor="middle" fill="#c62828" font-size="10" font-weight="bold">Uses factory.openSession() — NOT the shared session</text>
+
+  <!-- Step-by-step entity creation -->
+  <rect x="20" y="160" width="910" height="25" rx="4" fill="#e8eaf6" stroke="#283593"/>
+  <text x="475" y="177" text-anchor="middle" fill="#283593" font-weight="bold">Entity Creation Sequence (inside transaction)</text>
+
+  <!-- Step 1: Fetch Location -->
+  <rect x="20" y="200" width="175" height="70" rx="6" fill="#f3e5f5" stroke="#7b1fa2" stroke-width="1.5"/>
+  <text x="107" y="218" text-anchor="middle" fill="#7b1fa2" font-weight="bold" font-size="11">① Fetch Location</text>
+  <text x="30" y="236" fill="#555" font-size="10">HQL: "FROM Location</text>
+  <text x="30" y="249" fill="#555" font-size="10"> WHERE name = :venue"</text>
+  <text x="30" y="262" fill="#2e7d32" font-size="9">L2 cache HIT ✅</text>
+
+  <!-- Step 2: Fetch/Update Movie -->
+  <rect x="210" y="200" width="175" height="70" rx="6" fill="#fff8e1" stroke="#f57f17" stroke-width="1.5"/>
+  <text x="297" y="218" text-anchor="middle" fill="#f57f17" font-weight="bold" font-size="11">② Fetch + Update Movie</text>
+  <text x="220" y="236" fill="#555" font-size="10">Set movie.category</text>
+  <text x="220" y="249" fill="#555" font-size="10">session.saveOrUpdate()</text>
+  <text x="220" y="262" fill="#c62828" font-size="9">L2 movies region → INVALIDATED</text>
+
+  <!-- Step 3: Create Venues -->
+  <rect x="400" y="200" width="175" height="70" rx="6" fill="#fce4ec" stroke="#c62828" stroke-width="1.5"/>
+  <text x="487" y="218" text-anchor="middle" fill="#c62828" font-weight="bold" font-size="11">③ Create Venues</text>
+  <text x="410" y="236" fill="#555" font-size="10">new Venues()</text>
+  <text x="410" y="249" fill="#555" font-size="10">Set location, name, picture</text>
+  <text x="410" y="262" fill="#555" font-size="10">session.save(venue)</text>
+
+  <!-- Step 4: Create ScreeningDates -->
+  <rect x="590" y="200" width="175" height="70" rx="6" fill="#ede7f6" stroke="#4a148c" stroke-width="1.5"/>
+  <text x="677" y="218" text-anchor="middle" fill="#4a148c" font-weight="bold" font-size="11">④ Create ScreeningDates</text>
+  <text x="600" y="236" fill="#555" font-size="10">new ScreeningDates()</text>
+  <text x="600" y="249" fill="#555" font-size="10">Set date, movieId, venues</text>
+  <text x="600" y="262" fill="#555" font-size="10">session.save(date)</text>
+
+  <!-- Step 5: Create Screen -->
+  <rect x="780" y="200" width="150" height="70" rx="6" fill="#e8f5e9" stroke="#2e7d32" stroke-width="1.5"/>
+  <text x="855" y="218" text-anchor="middle" fill="#2e7d32" font-weight="bold" font-size="11">⑤ Create Screen</text>
+  <text x="790" y="236" fill="#555" font-size="10">new Screen()</text>
+  <text x="790" y="249" fill="#555" font-size="10">Set movie, dates</text>
+  <text x="790" y="262" fill="#555" font-size="10">session.save(screen)</text>
+
+  <!-- Arrows between steps -->
+  <line x1="195" y1="235" x2="208" y2="235" stroke="#666" stroke-width="1.5" marker-end="url(#av)"/>
+  <line x1="385" y1="235" x2="398" y2="235" stroke="#666" stroke-width="1.5" marker-end="url(#av)"/>
+  <line x1="575" y1="235" x2="588" y2="235" stroke="#666" stroke-width="1.5" marker-end="url(#av)"/>
+  <line x1="765" y1="235" x2="778" y2="235" stroke="#666" stroke-width="1.5" marker-end="url(#av)"/>
+
+  <!-- Step 6: Batch generate seats -->
+  <rect x="20" y="295" width="910" height="90" rx="8" fill="#e0f7fa" stroke="#00838f" stroke-width="2"/>
+  <text x="475" y="315" text-anchor="middle" fill="#00838f" font-weight="bold" font-size="14">⑥ Batch-Generate Seats (rows × seatsPerRow)</text>
+  <text x="30" y="340" fill="#555" font-size="11">Loop: for each row (A-P), for each column (1-N): new Seats() → session.save(seat)</text>
+  <text x="30" y="358" fill="#555" font-size="11">Example: 5 rows × 6 seats = 30 Seats entities created. Hibernate jdbc.batch_size=20 → 2 batch INSERT statements.</text>
+  <text x="30" y="376" fill="#555" font-size="11">Each Seat references Screen via FK. Price=3, Tax=1.33, isReserved="0" (all available).</text>
+
+  <!-- Cascade diagram -->
+  <rect x="20" y="400" width="450" height="25" rx="4" fill="#fce4ec" stroke="#c62828"/>
+  <text x="245" y="417" text-anchor="middle" fill="#c62828" font-weight="bold">CascadeType.ALL Effects on Commit</text>
+
+  <rect x="20" y="440" width="130" height="40" rx="6" fill="#fff8e1" stroke="#f57f17"/>
+  <text x="85" y="465" text-anchor="middle" fill="#f57f17" font-weight="bold">Venues</text>
+  <line x1="150" y1="460" x2="180" y2="460" stroke="#c62828" stroke-width="2" marker-end="url(#ac)"/>
+  <text x="165" y="452" fill="#c62828" font-size="8">ALL</text>
+
+  <rect x="185" y="440" width="130" height="40" rx="6" fill="#f5f5f5" stroke="#999"/>
+  <text x="250" y="465" text-anchor="middle" fill="#333" font-weight="bold">Screen</text>
+  <line x1="315" y1="460" x2="345" y2="460" stroke="#c62828" stroke-width="2" marker-end="url(#ac)"/>
+  <text x="330" y="452" fill="#c62828" font-size="8">ALL</text>
+
+  <rect x="350" y="440" width="120" height="40" rx="6" fill="#e0f7fa" stroke="#00838f"/>
+  <text x="410" y="465" text-anchor="middle" fill="#00838f" font-weight="bold">Seats (N)</text>
+
+  <rect x="20" y="500" width="175" height="40" rx="6" fill="#ede7f6" stroke="#4a148c"/>
+  <text x="107" y="525" text-anchor="middle" fill="#4a148c" font-weight="bold">ScreeningDates</text>
+  <line x1="195" y1="520" x2="85" y2="480" stroke="#c62828" stroke-width="2" marker-end="url(#ac)"/>
+  <text x="130" y="495" fill="#c62828" font-size="8">ALL → Venues</text>
+
+  <!-- Cache invalidation -->
+  <rect x="520" y="400" width="410" height="180" rx="8" fill="#fff" stroke="#f85149" stroke-width="2"/>
+  <text x="725" y="422" text-anchor="middle" fill="#f85149" font-weight="bold" font-size="14">Cache Invalidation on Commit</text>
+
+  <rect x="535" y="435" width="380" height="30" rx="4" fill="#fce4ec"/>
+  <text x="545" y="455" fill="#c62828" font-size="11">🗑️ L2 Entity Cache: movies region → Movie entity evicted (category changed)</text>
+
+  <rect x="535" y="475" width="380" height="30" rx="4" fill="#fce4ec"/>
+  <text x="545" y="495" fill="#c62828" font-size="11">🗑️ L2 Entity Cache: venues region → new Venue entity stored</text>
+
+  <rect x="535" y="515" width="380" height="30" rx="4" fill="#fce4ec"/>
+  <text x="545" y="535" fill="#c62828" font-size="11">🗑️ Query Cache: timestamps bumped for Movie, Venues, Screen tables</text>
+
+  <rect x="535" y="555" width="380" height="20" rx="4" fill="#e8f5e9"/>
+  <text x="545" y="570" fill="#2e7d32" font-size="11">📡 Kafka → ios-movies-notifications2 → WebSocket broadcast</text>
+</svg>
+</div>
+
+<h3>Admin Venue Insertion — Known Gotchas</h3>
+<div class="card priority-medium">
+<table>
+  <tr><th>Issue</th><th>Root Cause</th><th>Refactoring Fix</th></tr>
+  <tr><td><strong>Separate session</strong> for <code>insertNewScreen</code></td><td><code>factory.openSession()</code> used to avoid deadlocking the singleton's shared session.</td><td>Replace singleton DAO with <code>@RequestScoped</code> CDI bean — each request gets its own session, no deadlock risk.</td></tr>
+  <tr><td><strong>Race condition on IDs</strong></td><td><code>SELECT MAX(venuesId) FROM Venues</code> is not atomic under concurrent admin operations.</td><td>Use <code>@GeneratedValue(strategy=IDENTITY)</code> (already on Venues) and let MySQL auto-increment. Remove manual ID calculation.</td></tr>
+  <tr><td><strong>Stale reads after insert</strong></td><td>The separate session commits independently; the shared session may have cached entity state from before the insert.</td><td>With CDI-managed sessions, each request gets a fresh persistence context. Combined with L2 cache invalidation on commit, stale reads are eliminated.</td></tr>
+  <tr><td><strong>Memory pressure during bulk seat generation</strong></td><td>30+ Seats created in one transaction without <code>flush()/clear()</code> — all held in the persistence context.</td><td>Add periodic <code>session.flush(); session.clear();</code> every <code>jdbc.batch_size</code> (20) inserts. Already done in <code>deletePurchase()</code> — apply same pattern here.</td></tr>
+  <tr><td><strong>CascadeType.ALL on Venues.screen</strong></td><td>Inserting a Venue automatically persists the Screen and all its Seats via cascade. This is intentional but surprising — updating a Venue can cascade-update the Screen.</td><td>Consider narrowing to <code>CascadeType.PERSIST</code> only, and explicitly manage Screen lifecycle.</td></tr>
+</table>
+</div>
+</section>
+
+<!-- ──────── mbook ENTITY RELATIONSHIPS ──────── -->
+<section id="mbook-entities">
+<h2>mbook-quarkus — Entity Relationships (login_ schema)</h2>
+<p>The <code>mbook-quarkus</code> service uses Quarkus-managed Hibernate (CDI-injected <code>Session</code>) with three simple entities. There are no JPA relationships between them — joins are done at the application level via shared keys (<code>uuid</code>, <code>deviceId</code>).</p>
+
+<div class="diagram-container">
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 800 300" font-family="Arial,sans-serif" font-size="12">
+  <rect width="800" height="300" fill="#f8f9fa" rx="8"/>
+
+  <!-- Logins -->
+  <rect x="30" y="30" width="200" height="120" rx="8" fill="#fff" stroke="#2e7d32" stroke-width="2"/>
+  <rect x="30" y="30" width="200" height="28" rx="8" fill="#2e7d32"/>
+  <rect x="30" y="48" width="200" height="10" fill="#fff"/>
+  <text x="130" y="50" text-anchor="middle" fill="#fff" font-weight="bold" font-size="14">Logins</text>
+  <text x="40" y="72" fill="#333" font-size="11">🔑 id INT (PK, AUTO)</text>
+  <text x="40" y="88" fill="#333" font-size="11">user VARCHAR</text>
+  <text x="40" y="104" fill="#333" font-size="11">uuid VARCHAR (unique key)</text>
+  <text x="40" y="120" fill="#333" font-size="11">email VARCHAR</text>
+  <text x="40" y="136" fill="#333" font-size="11">profilePicture VARCHAR</text>
+
+  <!-- Devices -->
+  <rect x="300" y="30" width="200" height="100" rx="8" fill="#fff" stroke="#7b1fa2" stroke-width="2"/>
+  <rect x="300" y="30" width="200" height="28" rx="8" fill="#7b1fa2"/>
+  <rect x="300" y="48" width="200" height="10" fill="#fff"/>
+  <text x="400" y="50" text-anchor="middle" fill="#fff" font-weight="bold" font-size="14">Devices</text>
+  <text x="310" y="72" fill="#333" font-size="11">🔑 id INT (PK, AUTO)</text>
+  <text x="310" y="88" fill="#333" font-size="11">deviceId VARCHAR</text>
+  <text x="310" y="104" fill="#333" font-size="11">uuid VARCHAR → (app-level)</text>
+
+  <!-- Tokens -->
+  <rect x="570" y="30" width="200" height="120" rx="8" fill="#fff" stroke="#283593" stroke-width="2"/>
+  <rect x="570" y="30" width="200" height="28" rx="8" fill="#283593"/>
+  <rect x="570" y="48" width="200" height="10" fill="#fff"/>
+  <text x="670" y="50" text-anchor="middle" fill="#fff" font-weight="bold" font-size="14">Tokens</text>
+  <text x="580" y="72" fill="#333" font-size="11">🔑 id INT (PK, AUTO)</text>
+  <text x="580" y="88" fill="#333" font-size="11">deviceId VARCHAR</text>
+  <text x="580" y="104" fill="#333" font-size="11">token1 VARCHAR (UUID)</text>
+  <text x="580" y="120" fill="#333" font-size="11">token2 VARCHAR (random)</text>
+  <text x="580" y="136" fill="#333" font-size="11">TIME_ VARCHAR</text>
+
+  <!-- Application-level joins -->
+  <line x1="230" y1="90" x2="298" y2="90" stroke="#999" stroke-width="1.5" stroke-dasharray="6 3"/>
+  <text x="264" y="82" text-anchor="middle" fill="#999" font-size="9">uuid</text>
+
+  <line x1="500" y1="80" x2="568" y2="80" stroke="#999" stroke-width="1.5" stroke-dasharray="6 3"/>
+  <text x="534" y="72" text-anchor="middle" fill="#999" font-size="9">deviceId</text>
+
+  <!-- Note -->
+  <rect x="30" y="180" width="740" height="100" rx="6" fill="#fff" stroke="#ddd"/>
+  <text x="40" y="200" fill="#333" font-weight="bold" font-size="12">Key Differences from mbooks-quarkus:</text>
+  <text x="40" y="220" fill="#555" font-size="11">• Uses Quarkus-managed Hibernate (@Inject Session) — NOT a singleton DAO</text>
+  <text x="40" y="238" fill="#555" font-size="11">• DAO is @RequestScoped with @Transactional methods — container manages session + tx lifecycle</text>
+  <text x="40" y="256" fill="#555" font-size="11">• No JPA relationships between entities — all joins done via HQL with shared keys (uuid, deviceId, token1)</text>
+  <text x="40" y="274" fill="#555" font-size="11">• "Not found" signalled by sentinel entity (id=0) rather than null — client must check id != 0</text>
+</svg>
+</div>
+</section>
+
+<!-- ──────── SERVICE INTERACTION DIAGRAM ──────── -->
+<section id="service-interaction">
+<h2>Service Interaction Map</h2>
+<p>A detailed view of how the four backend services communicate — showing the exact paths, headers, and data exchanged for each inter-service call.</p>
+
+<div class="diagram-container">
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 960 520" font-family="Arial,sans-serif" font-size="12">
+  <rect width="960" height="520" fill="#f8f9fa" rx="12"/>
+  <defs>
+    <marker id="si" markerWidth="8" markerHeight="6" refX="8" refY="3" orient="auto"><path d="M0,0 L8,3 L0,6 Z" fill="#666"/></marker>
+    <marker id="sk" markerWidth="8" markerHeight="6" refX="8" refY="3" orient="auto"><path d="M0,0 L8,3 L0,6 Z" fill="#4a148c"/></marker>
+  </defs>
+
+  <!-- dalogin -->
+  <rect x="30" y="30" width="250" height="200" rx="10" fill="#e8f5e9" stroke="#2e7d32" stroke-width="2"/>
+  <text x="155" y="55" text-anchor="middle" fill="#2e7d32" font-weight="bold" font-size="16">dalogin-quarkus</text>
+  <text x="155" y="72" text-anchor="middle" fill="#555" font-size="10">Auth Gateway | Port 8080 | /login</text>
+  <text x="40" y="95" fill="#333" font-size="10">📋 Servlets: HelloWorld, Admin,</text>
+  <text x="40" y="108" fill="#333" font-size="10">  CheckOut, GetAllPurchases, ...</text>
+  <text x="40" y="128" fill="#333" font-size="10">🔒 Filters: AuthFilter, CORSFilter</text>
+  <text x="40" y="148" fill="#333" font-size="10">🔌 ServiceClient (RESTEasy)</text>
+  <text x="40" y="168" fill="#333" font-size="10">🗄️ SQLAccess (raw JDBC → login_)</text>
+  <text x="40" y="188" fill="#333" font-size="10">📊 DB: MySQL login_ (stored procs)</text>
+
+  <!-- mbook -->
+  <rect x="350" y="30" width="250" height="200" rx="10" fill="#f3e5f5" stroke="#7b1fa2" stroke-width="2"/>
+  <text x="475" y="55" text-anchor="middle" fill="#7b1fa2" font-weight="bold" font-size="16">mbook-quarkus</text>
+  <text x="475" y="72" text-anchor="middle" fill="#555" font-size="10">User/Device API | Port 8888 | /mbook-1</text>
+  <text x="360" y="95" fill="#333" font-size="10">📋 REST: /rest/user/{user}/{token1}</text>
+  <text x="360" y="108" fill="#333" font-size="10">  /rest/device/{uuid}, /rest/news</text>
+  <text x="360" y="128" fill="#333" font-size="10">🔒 CiphertextFilter + CookieFilter</text>
+  <text x="360" y="148" fill="#333" font-size="10">📡 KafkaListener → WebSocketServer</text>
+  <text x="360" y="168" fill="#333" font-size="10">📡 KafkaMoviesListener (cross-svc)</text>
+  <text x="360" y="188" fill="#333" font-size="10">🗄️ DAO (@RequestScoped → login_)</text>
+
+  <!-- mbooks -->
+  <rect x="30" y="280" width="250" height="210" rx="10" fill="#fff8e1" stroke="#f57f17" stroke-width="2"/>
+  <text x="155" y="305" text-anchor="middle" fill="#f57f17" font-weight="bold" font-size="16">mbooks-quarkus</text>
+  <text x="155" y="322" text-anchor="middle" fill="#555" font-size="10">Movie/Booking API | Port 8080 | /mbooks-1</text>
+  <text x="40" y="345" fill="#333" font-size="10">📋 BookController (1171 lines!)</text>
+  <text x="40" y="358" fill="#333" font-size="10">  movies, venues, seats, payment</text>
+  <text x="40" y="378" fill="#333" font-size="10">🔒 CiphertextFilter + CookieFilter</text>
+  <text x="40" y="398" fill="#333" font-size="10">💳 PaymentService → Braintree</text>
+  <text x="40" y="418" fill="#333" font-size="10">📡 KafkaMessageProducer</text>
+  <text x="40" y="438" fill="#333" font-size="10">🗄️ DAO (singleton → book schema)</text>
+  <text x="40" y="458" fill="#333" font-size="10">💾 Infinispan L2 + query cache</text>
+  <text x="40" y="478" fill="#333" font-size="10">🔒 Pessimistic locks (seat booking)</text>
+
+  <!-- image service -->
+  <rect x="350" y="280" width="250" height="120" rx="10" fill="#e0f7fa" stroke="#00838f" stroke-width="2"/>
+  <text x="475" y="305" text-anchor="middle" fill="#00838f" font-weight="bold" font-size="16">simple-service-webapp</text>
+  <text x="475" y="322" text-anchor="middle" fill="#555" font-size="10">Image Server | Port 8085</text>
+  <text x="360" y="345" fill="#333" font-size="10">📋 /webapi/myresource/images/*</text>
+  <text x="360" y="365" fill="#333" font-size="10">📁 Serves: movies/, venues/,</text>
+  <text x="360" y="378" fill="#333" font-size="10">   profiles/, images/</text>
+  <text x="360" y="395" fill="#333" font-size="10">No DB, no auth — static files</text>
+
+  <!-- Kafka -->
+  <rect x="680" y="120" width="250" height="110" rx="10" fill="#ede7f6" stroke="#4a148c" stroke-width="2"/>
+  <text x="805" y="145" text-anchor="middle" fill="#4a148c" font-weight="bold" font-size="16">Apache Kafka</text>
+  <text x="690" y="168" fill="#555" font-size="10">📨 ios-users-notifications</text>
+  <text x="690" y="184" fill="#555" font-size="10">  mbook produces → mbook consumes</text>
+  <text x="690" y="200" fill="#555" font-size="10">📨 ios-movies-notifications2</text>
+  <text x="690" y="216" fill="#555" font-size="10">  mbooks produces → mbook consumes</text>
+
+  <!-- dalogin → mbook (ServiceClient) -->
+  <line x1="280" y1="100" x2="348" y2="100" stroke="#2e7d32" stroke-width="2.5" marker-end="url(#si)"/>
+  <rect x="283" y="80" width="63" height="15" rx="3" fill="#e8f5e9" stroke="#2e7d32"/>
+  <text x="314" y="91" text-anchor="middle" fill="#2e7d32" font-size="8">HTTP GET</text>
+  <text x="314" y="73" text-anchor="middle" fill="#2e7d32" font-size="8" font-weight="bold">ServiceClient</text>
+
+  <!-- dalogin → mbooks (ServiceClient) -->
+  <line x1="155" y1="230" x2="155" y2="278" stroke="#2e7d32" stroke-width="2.5" marker-end="url(#si)"/>
+  <rect x="160" y="240" width="100" height="15" rx="3" fill="#e8f5e9" stroke="#2e7d32"/>
+  <text x="210" y="251" text-anchor="middle" fill="#2e7d32" font-size="8">HTTP POST/GET</text>
+
+  <!-- mbooks → Kafka -->
+  <line x1="280" y1="418" x2="680" y2="200" stroke="#4a148c" stroke-width="1.5" stroke-dasharray="6 3" marker-end="url(#sk)"/>
+  <text x="480" y="330" fill="#4a148c" font-size="9" font-weight="bold">produce: ios-movies-notifications2</text>
+
+  <!-- mbook → Kafka (produce) -->
+  <line x1="600" y1="148" x2="678" y2="148" stroke="#4a148c" stroke-width="1.5" stroke-dasharray="6 3" marker-end="url(#sk)"/>
+  <text x="639" y="140" text-anchor="middle" fill="#4a148c" font-size="9">produce</text>
+
+  <!-- Kafka → mbook (consume) -->
+  <line x1="680" y1="175" x2="602" y2="175" stroke="#4a148c" stroke-width="1.5" stroke-dasharray="6 3" marker-end="url(#sk)"/>
+  <text x="641" y="190" text-anchor="middle" fill="#4a148c" font-size="9">consume (both topics)</text>
+
+  <!-- Headers box -->
+  <rect x="680" y="280" width="250" height="210" rx="8" fill="#fff" stroke="#ddd"/>
+  <text x="805" y="300" text-anchor="middle" fill="#333" font-weight="bold" font-size="13">Inter-Service Headers</text>
+  <text x="690" y="322" fill="#555" font-size="10" font-weight="bold">dalogin → mbook/mbooks:</text>
+  <text x="690" y="338" fill="#555" font-size="10">• uuid (from session)</text>
+  <text x="690" y="354" fill="#555" font-size="10">• token2 (from DB Tokens table)</text>
+  <text x="690" y="370" fill="#555" font-size="10">• TIME_ (session timestamp)</text>
+  <text x="690" y="386" fill="#555" font-size="10">• X-Token / Ciphertext (same val)</text>
+  <text x="690" y="402" fill="#555" font-size="10">• XSRF-TOKEN cookie</text>
+  <text x="690" y="418" fill="#555" font-size="10">• JSESSIONID cookie</text>
+  <text x="690" y="440" fill="#c62828" font-size="10" font-weight="bold">⚠️ Header names are client contracts.</text>
+  <text x="690" y="456" fill="#c62828" font-size="10">Do NOT rename without updating</text>
+  <text x="690" y="472" fill="#c62828" font-size="10">iOS client + web interceptor.</text>
+</svg>
+</div>
 </section>
 
 <!-- ──────── REALTIME ──────── -->
@@ -2461,6 +3116,7 @@ public String getHash(String pass, String user) throws SQLException {
 <h2>Document Version History</h2>
 <table>
   <tr><th>Date</th><th>Version</th><th>Changes</th></tr>
+  <tr><td>March 16, 2026</td><td>1.3</td><td>Added: Hibernate Entity Relationships diagram (lazy vs eager fetch types with annotations), Movie Booking Entity Walk (step-by-step cache/DB interaction per user action), Admin Venue Insertion cascade diagram with gotchas table, mbook entities (login_ schema), Service Interaction Map with inter-service headers. Updated AGENTS.md with refactoring roadmap, entity relationship guide, and L2 cache summary.</td></tr>
   <tr><td>March 16, 2026</td><td>1.2</td><td>Added: Registration &amp; Voucher Flow diagram, Password Reset Flow diagram, Web Frontend (AngularJS) documentation, Environment Variables reference, Configuration Files reference, Testing section, Glossary. Expanded iOS and booking documentation.</td></tr>
   <tr><td>March 16, 2026</td><td>1.1</td><td>Added: Booking · Hibernate &amp; Caching deep-dive, iOS client documentation (architecture, screens, backend contract, networking stack, crypto constants, Braintree, WebSocket).</td></tr>
   <tr><td>March 15, 2026</td><td>1.0</td><td>Initial release: High-level architecture, request flow, auth flow, booking flow, all four backend services, database schemas (login_ + book), stored procedures, triggers, Kubernetes topology, deploy runbook, refactoring suggestions, API reference.</td></tr>
