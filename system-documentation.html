@@ -100,12 +100,18 @@
     <li><a href="#request-flow">Request Flow</a></li>
     <li><a href="#auth-flow">Authentication Flow</a></li>
     <li><a href="#booking-flow">Booking &amp; Payment Flow</a></li>
+    <li><a href="#booking-hibernate-caching">Booking · Hibernate &amp; Caching</a></li>
     <li><a href="#realtime">Realtime / Kafka + WebSocket</a></li>
+    <li><a href="#registration-flow">Registration &amp; Voucher Flow</a></li>
+    <li><a href="#password-reset-flow">Password Reset Flow</a></li>
     <li class="section-title">Backend Services</li>
     <li><a href="#svc-dalogin">dalogin-quarkus</a></li>
     <li><a href="#svc-mbook">mbook-quarkus</a></li>
     <li><a href="#svc-mbooks">mbooks-quarkus</a></li>
     <li><a href="#svc-images">simple-service-webapp</a></li>
+    <li class="section-title">Web Frontend</li>
+    <li><a href="#web-overview">AngularJS Client</a></li>
+    <li><a href="#web-pages">Pages &amp; Navigation</a></li>
     <li class="section-title">iOS Client</li>
     <li><a href="#ios-overview">App Overview</a></li>
     <li><a href="#ios-architecture">Architecture &amp; Networking</a></li>
@@ -120,8 +126,12 @@
     <li><a href="#k8s">Kubernetes Topology</a></li>
     <li><a href="#deploy">Deploy Runbook</a></li>
     <li class="section-title">Analysis</li>
+    <li><a href="#env-vars">Environment Variables</a></li>
+    <li><a href="#config-files">Configuration Files</a></li>
+    <li><a href="#testing">Testing</a></li>
     <li><a href="#refactoring">Refactoring Suggestions</a></li>
     <li><a href="#api-reference">API Reference</a></li>
+    <li><a href="#glossary">Glossary</a></li>
   </ul>
 </nav>
 
@@ -523,6 +533,241 @@
 </div>
 </section>
 
+<!-- ──────── BOOKING · HIBERNATE & CACHING DEEP-DIVE ──────── -->
+<section id="booking-hibernate-caching">
+<h2>Booking · Hibernate &amp; Caching Deep-Dive</h2>
+<p>The booking flow in <code>mbooks-quarkus</code> relies on a hand-managed Hibernate <code>SessionFactory</code> (not Quarkus-managed persistence) together with Infinispan-backed second-level and query caches. Understanding how these layers interact is essential for reasoning about data freshness, concurrency, and performance during the ticket-reservation lifecycle.</p>
+
+<h3>1. Singleton DAO &amp; Shared Session</h3>
+<div class="card">
+<p><code>DAO</code> is instantiated once via a double-checked <code>DAO.instance()</code> pattern. It holds:</p>
+<ul>
+  <li>A single <code>SessionFactory</code> built from <code>hibernate.cfg.xml</code> by <code>HibernateUtil</code>.</li>
+  <li>A <strong>static volatile</strong> <code>Session</code> object shared across all requests (opened at startup, reused via <code>factory.getCurrentSession()</code>).</li>
+  <li>All public methods are <code>synchronized</code>, serialising every database operation through the singleton — effectively making the DAO a global lock.</li>
+</ul>
+<p>At construction time the factory's entire cache is evicted (<code>factory.getCache().evictAllRegions()</code>) to ensure a cold start. Statistics are enabled for monitoring (<code>hibernate.generate_statistics=true</code>).</p>
+</div>
+
+<h3>2. Hibernate Configuration Highlights</h3>
+<table>
+  <tr><th>Property</th><th>Value</th><th>Booking-Flow Impact</th></tr>
+  <tr><td><code>current_session_context_class</code></td><td><code>thread</code></td><td>Session is bound to the calling thread; the singleton's <code>synchronized</code> methods guarantee only one thread touches the session at a time.</td></tr>
+  <tr><td><code>connection.autocommit</code></td><td><code>false</code></td><td>Every DAO method manually begins/commits transactions. Seat-locking and ticket persistence happen inside explicit transaction boundaries.</td></tr>
+  <tr><td><code>jdbc.batch_size</code></td><td><code>20</code></td><td>Bulk seat inserts (admin <code>addScreen</code>) and bulk ticket deletes (<code>deletePurchase</code>) are batched in groups of 20 for efficiency.</td></tr>
+  <tr><td><code>order_inserts / order_updates</code></td><td><code>true</code></td><td>Hibernate reorders SQL to maximise batch effectiveness during multi-seat bookings.</td></tr>
+  <tr><td><code>default_batch_fetch_size</code></td><td><code>10</code></td><td>Lazy collections (e.g. <code>Movie.screens</code>, <code>Location.venues</code>) are fetched in batches of 10, reducing N+1 queries when navigating entity graphs.</td></tr>
+  <tr><td><code>c3p0.max_size</code></td><td><code>100</code></td><td>Connection pool ceiling; the synchronized DAO means only one connection is actively used at a time, but pooled connections remain available for any future refactoring toward parallel access.</td></tr>
+</table>
+
+<h3>3. Second-Level Cache (Infinispan)</h3>
+<div class="card">
+<h4>Entity-Level Caching</h4>
+<p>Four entities are declared <code>@Cacheable</code> and mapped to named cache regions in <code>hibernate.cfg.xml</code>:</p>
+<table>
+  <tr><th>Entity</th><th>Cache Region</th><th>Strategy</th><th>Rationale</th></tr>
+  <tr><td><code>Movie</code></td><td><code>movies</code></td><td>read-write</td><td>Movie catalog changes infrequently; cache serves browse/search reads. Admin <code>addScreen</code>/<code>updateScreen</code> mutates movies, which invalidates the region entry.</td></tr>
+  <tr><td><code>Venues</code></td><td><code>venues</code></td><td>read-write</td><td>Venue lookups (per movie, per location) are read-heavy during seat selection.</td></tr>
+  <tr><td><code>Location</code></td><td><code>location</code></td><td>read-write</td><td>Static venue-location data; almost never mutated after seed.</td></tr>
+  <tr><td><code>Ticket</code></td><td><code>ticket</code></td><td>read-write</td><td>Tickets are read when fetching purchase history; the read-write strategy ensures newly created tickets become visible immediately after commit.</td></tr>
+</table>
+<p><strong>Not cached:</strong> <code>Seats</code>, <code>Screen</code>, <code>ScreeningDates</code>, <code>Purchase</code>. Seat availability is the most latency-sensitive data in the booking flow and is deliberately <em>not</em> entity-cached to avoid serving stale "available" data.</p>
+
+<h4>Query-Level Caching</h4>
+<p>The Hibernate query cache (<code>use_query_cache=true</code>) is enabled and used extensively via <code>.setCacheable(true)</code> with named cache regions:</p>
+<table>
+  <tr><th>Query / DAO Method</th><th>Cache Region</th><th>Behaviour</th></tr>
+  <tr><td><code>getAllMovies()</code></td><td><code>movies</code></td><td>Full movie list (with optional category filter &amp; paging) is query-cached. <code>CacheMode.NORMAL</code> reads from and writes to cache.</td></tr>
+  <tr><td><code>searchMovies()</code></td><td><code>movies</code></td><td>Search-by-name results share the same <code>movies</code> region; any movie entity change auto-invalidates.</td></tr>
+  <tr><td><code>getAllVenuesForUpdate()</code></td><td><code>movies</code></td><td>Admin venue+movie join query; cached in the <code>movies</code> region because the driving entity is Movie.</td></tr>
+  <tr><td><code>getVenuesForMovie()</code> / <code>getVenueByLocation()</code></td><td><code>venues</code></td><td>Venue lists for a given movie/location are cached; invalidated when a Venue entity is updated.</td></tr>
+  <tr><td><code>getAllLocations()</code> / <code>getLocationForVenue()</code> / <code>getLocationForMovie()</code></td><td><code>location</code></td><td>Location queries are cached; effectively static after initial data load.</td></tr>
+  <tr><td><code>getPurchases(uuid)</code></td><td><code>purchases</code></td><td>Per-user purchase list is query-cached. New bookings create new Purchase rows, which invalidate the cache for subsequent reads.</td></tr>
+  <tr><td><code>getTicketPerPurchase()</code></td><td><em>(default)</em></td><td>Ticket-per-purchase query uses <code>setCacheable(true)</code> without an explicit region; falls back to the default query cache.</td></tr>
+</table>
+<p><strong>Critical design choice:</strong> Seat-availability queries (<code>getSeatsForScreening</code>, <code>getSeatForAvailability</code>) are <em>not</em> query-cached. These always hit the database to guarantee the freshest reservation state.</p>
+</div>
+
+<h3>4. Infinispan Cache Topology</h3>
+<div class="card">
+<p>Configured in <code>infinispan-configs-local.xml</code> with four local (non-clustered) cache templates:</p>
+<table>
+  <tr><th>Cache Template</th><th>Max Idle</th><th>Max Entries</th><th>Eviction</th><th>Used By</th></tr>
+  <tr><td><code>entity</code></td><td>5 min</td><td>10 000</td><td>REMOVE (LRU)</td><td>Second-level entity cache (Movie, Venues, Location, Ticket)</td></tr>
+  <tr><td><code>local-query</code></td><td>5 min</td><td>10 000</td><td>REMOVE (LRU)</td><td>Hibernate query cache results</td></tr>
+  <tr><td><code>timestamps</code></td><td>∞</td><td>unbounded</td><td>NONE</td><td>Hibernate timestamps cache — tracks last-update times per table/region for query-cache invalidation</td></tr>
+  <tr><td><code>pending-puts</code></td><td>1 min</td><td>—</td><td>—</td><td>Coordinates concurrent cache puts during entity loading</td></tr>
+</table>
+<p>All caches are <code>simple-cache="true"</code> (no transactions, no clustering) and use <code>application/x-java-object</code> encoding for zero-copy in-process storage.</p>
+</div>
+
+<h3>5. Booking Transaction — Step-by-Step with Cache Effects</h3>
+<div class="card">
+<p>The primary booking entry point is <code>BookController.fullcheckout2()</code> → <code>TicketService.reserveTickets()</code> → <code>BookingHandlerImpl.returnTickets()</code> → <code>DAO.bookTickets()</code>.</p>
+<ol>
+  <li><strong>Create Purchase row</strong> — <code>DAO.setPurchaseId(uuid, orderId)</code> inserts a new <code>Purchase</code> entity with a generated ID. Because <code>Purchase</code> is <em>not</em> entity-cached, this does not touch the L2 cache. However, it <em>does</em> invalidate the <code>purchases</code> query cache region (timestamp update).</li>
+  <li><strong>Lock each requested seat</strong> — For every seat number, <code>DAO.getSeatForAvailability(screeningDatesId, seatNumber)</code> executes an HQL join with <code>LockModeType.PESSIMISTIC_WRITE</code>. This acquires a database-level <code>SELECT … FOR UPDATE</code> row lock on the <code>Seats</code> row, preventing concurrent bookings from reserving the same seat. <code>Seats</code> is not L2-cached, so the lock always hits the database.</li>
+  <li><strong>Availability check</strong> — If any seat's <code>isReserved != "0"</code>, a <code>CustomExceptions</code> is thrown, aborting the entire booking. The transaction is not committed, so the pessimistic locks are released on rollback.</li>
+  <li><strong>Create tickets &amp; mark seats reserved</strong> — For each available seat:
+    <ul>
+      <li>A new <code>Ticket</code> entity is created linking the seat, screen, purchase, price, and tax.</li>
+      <li>The seat's <code>isReserved</code> is set to <code>"1"</code>.</li>
+      <li><code>session.save(ticket)</code> + <code>session.update(seat)</code> are called — these are batched by Hibernate (batch size 20).</li>
+    </ul>
+    Since <code>Ticket</code> is L2-cached (read-write), the newly persisted ticket is placed into the <code>ticket</code> cache region upon transaction commit. <code>Seats</code> is not cached, so its update goes directly to the database.
+  </li>
+  <li><strong>Return tickets (no explicit commit in bookTickets)</strong> — The <code>@Transactional</code> annotation on <code>bookTickets()</code> manages the commit. On success, the Hibernate flush writes all batched inserts/updates, the L2 cache is updated for <code>Ticket</code> entities, and query-cache timestamps for affected regions are bumped.</li>
+</ol>
+</div>
+
+<h3>6. Post-Booking Cache Interactions</h3>
+<table>
+  <tr><th>Action</th><th>Cache Effect</th></tr>
+  <tr><td>Seat map refresh (<code>DAO.updatetedSeats()</code>)</td><td>Loads <code>ScreeningDates → Venues → Screen → Seats</code> from database (no cache). Returns the live reservation state to the client.</td></tr>
+  <tr><td>Purchase history (<code>DAO.getPurchases(uuid)</code>)</td><td>Query-cached in <code>purchases</code> region. After a new booking the timestamp cache invalidates stale results, so the next call re-queries the database and caches the updated list.</td></tr>
+  <tr><td>Ticket-per-purchase (<code>DAO.getTicketPerPurchase()</code>)</td><td>Uses <code>JOIN FETCH</code> to eagerly load Screen → Movie and ScreeningDates → Venues in one query. Result is query-cached (default region). The joined <code>Movie</code> and <code>Venues</code> entities populate the L2 entity cache.</td></tr>
+  <tr><td>Cancel ticket (<code>DAO.cancelTicket()</code>)</td><td>Loads and deletes <code>Ticket</code> (evicts from <code>ticket</code> L2 region), resets <code>Seats.isReserved="0"</code> (direct DB update). If all tickets are cancelled the <code>Purchase</code> is deleted. Query caches are invalidated by timestamp.</td></tr>
+  <tr><td>Delete purchase (<code>DAO.deletePurchase()</code>)</td><td>Bulk-fetches tickets with <code>LEFT JOIN FETCH</code>, resets seats in batches of 20 (with <code>session.flush()/clear()</code> to avoid memory pressure), then bulk-deletes the purchase via HQL. The flush/clear cycle means intermediate entity state is not held in the persistence context.</td></tr>
+</table>
+
+<h3>7. Admin Screen Management &amp; Cache</h3>
+<div class="card">
+<p>Admin operations (<code>addScreen</code>, <code>updateScreen</code>, <code>deleteScreen</code>) modify <code>Movie</code>, <code>Venues</code>, <code>Screen</code>, <code>ScreeningDates</code>, and <code>Seats</code> entities:</p>
+<ul>
+  <li><strong>addScreen</strong> — <code>DAO.insertNewScreen()</code> opens a <em>separate</em> session (<code>factory.openSession()</code>) rather than using the singleton shared session, to avoid deadlocking with concurrent reads. It creates Location lookup → Movie update (sets category) → new Venue → new ScreeningDates → new Screen → batch-generates Seats (row×col). After commit, the <code>movies</code> and <code>venues</code> L2 entity caches are invalidated for the affected entities. A Kafka message is published via <code>KafkaMessageProducer</code> on a background executor.</li>
+  <li><strong>updateScreen</strong> — Uses the shared session. Updates Location on Venue, ScreeningDate, Movie category, and Screen→Movie link. Commit invalidates <code>movies</code>, <code>venues</code>, and <code>location</code> cache regions for touched entities.</li>
+  <li><strong>deleteScreen</strong> — Deletes a <code>ScreeningDates</code> entity (cascades to Venues/Screen/Seats via <code>CascadeType.ALL</code>). Evicts related entries from all affected L2 cache regions.</li>
+</ul>
+</div>
+
+<h3>8. Concurrency Model &amp; Cache Consistency</h3>
+<div class="card priority-medium">
+<h4>How Consistency is Maintained</h4>
+<ul>
+  <li><strong>Database-level pessimistic locks</strong> — <code>PESSIMISTIC_WRITE</code> on seats during booking prevents double-selling. This is the authoritative concurrency control.</li>
+  <li><strong>Synchronized DAO</strong> — The singleton's <code>synchronized</code> methods serialise all Hibernate operations, preventing session-level race conditions (Hibernate sessions are not thread-safe).</li>
+  <li><strong>Read-write L2 cache strategy</strong> — Infinispan's read-write strategy uses soft locks: when an entity is updated, the cache entry is replaced with a lock marker until the transaction commits. Concurrent reads during this window bypass the cache and hit the database.</li>
+  <li><strong>Timestamp-based query cache invalidation</strong> — The <code>timestamps</code> Infinispan cache tracks per-table modification times. When a booking commits (touching <code>Ticket</code>, <code>Seats</code>, <code>Purchase</code> tables), all query-cache entries that reference those tables are invalidated.</li>
+</ul>
+
+<h4>Known Limitations</h4>
+<ul>
+  <li>The global <code>synchronized</code> lock on the DAO serialises all operations — reads and writes alike. This limits throughput to one concurrent database operation at a time. Movie browsing (read-only, cacheable) is blocked while a booking transaction holds the lock.</li>
+  <li>The static shared session means all operations share the same persistence context. Long-running admin operations (e.g. generating 100+ seats) can grow the persistence context, increasing memory pressure until the next <code>flush()/clear()</code>.</li>
+  <li><code>Seats</code> is not L2-cached (by design, for freshness), but it also means repeated seat-map loads (e.g. polling for availability) always hit the database.</li>
+  <li>The 5-minute idle timeout on entity and query caches means that after a quiet period, the first movie-listing request will see a cache miss and full DB round-trip.</li>
+</ul>
+</div>
+
+<h3>9. Data Flow Summary Diagram</h3>
+<div class="diagram-container">
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 900 500" font-family="Arial,sans-serif" font-size="12">
+  <rect width="900" height="500" fill="#f8f9fa" rx="8"/>
+  <defs><marker id="a5" markerWidth="8" markerHeight="6" refX="8" refY="3" orient="auto"><path d="M0,0 L8,3 L0,6 Z" fill="#666"/></marker></defs>
+
+  <!-- Client -->
+  <rect x="20" y="20" width="140" height="40" rx="6" fill="#e3f2fd" stroke="#1976d2" stroke-width="2"/>
+  <text x="90" y="45" text-anchor="middle" fill="#1976d2" font-weight="bold">Client (iOS/Web)</text>
+
+  <!-- BookController -->
+  <rect x="200" y="10" width="180" height="55" rx="6" fill="#e8f5e9" stroke="#2e7d32" stroke-width="2"/>
+  <text x="290" y="30" text-anchor="middle" fill="#2e7d32" font-weight="bold">BookController</text>
+  <text x="290" y="48" text-anchor="middle" fill="#555" font-size="10">fullcheckout2 / getAllMovies</text>
+  <line x1="160" y1="40" x2="198" y2="40" stroke="#666" marker-end="url(#a5)"/>
+
+  <!-- TicketService -->
+  <rect x="420" y="10" width="150" height="55" rx="6" fill="#f3e5f5" stroke="#7b1fa2" stroke-width="2"/>
+  <text x="495" y="30" text-anchor="middle" fill="#7b1fa2" font-weight="bold">TicketService</text>
+  <text x="495" y="48" text-anchor="middle" fill="#555" font-size="10">reserveTickets()</text>
+  <line x1="380" y1="37" x2="418" y2="37" stroke="#666" marker-end="url(#a5)"/>
+
+  <!-- BookingHandlerImpl -->
+  <rect x="610" y="10" width="160" height="55" rx="6" fill="#fff8e1" stroke="#f57f17" stroke-width="2"/>
+  <text x="690" y="30" text-anchor="middle" fill="#f57f17" font-weight="bold">BookingHandlerImpl</text>
+  <text x="690" y="48" text-anchor="middle" fill="#555" font-size="10">returnTickets()</text>
+  <line x1="570" y1="37" x2="608" y2="37" stroke="#666" marker-end="url(#a5)"/>
+
+  <!-- DAO Singleton -->
+  <rect x="340" y="100" width="220" height="60" rx="8" fill="#e8eaf6" stroke="#283593" stroke-width="2"/>
+  <text x="450" y="120" text-anchor="middle" fill="#283593" font-weight="bold" font-size="14">DAO (singleton, synchronized)</text>
+  <text x="450" y="140" text-anchor="middle" fill="#555" font-size="10">bookTickets() / getAllMovies() / …</text>
+  <line x1="690" y1="65" x2="450" y2="98" stroke="#666" stroke-dasharray="4" marker-end="url(#a5)"/>
+
+  <!-- Hibernate Session -->
+  <rect x="200" y="200" width="200" height="50" rx="6" fill="#fce4ec" stroke="#c62828" stroke-width="1.5"/>
+  <text x="300" y="220" text-anchor="middle" fill="#c62828" font-weight="bold">Hibernate Session</text>
+  <text x="300" y="238" text-anchor="middle" fill="#555" font-size="10">static volatile, thread-bound</text>
+  <line x1="380" y1="160" x2="300" y2="198" stroke="#c62828" marker-end="url(#a5)"/>
+
+  <!-- L2 Cache -->
+  <rect x="500" y="200" width="200" height="50" rx="6" fill="#e0f7fa" stroke="#00838f" stroke-width="1.5"/>
+  <text x="600" y="220" text-anchor="middle" fill="#00838f" font-weight="bold">Infinispan L2 Cache</text>
+  <text x="600" y="238" text-anchor="middle" fill="#555" font-size="10">entity + query + timestamps</text>
+  <line x1="520" y1="160" x2="600" y2="198" stroke="#00838f" marker-end="url(#a5)"/>
+
+  <!-- DB -->
+  <rect x="340" y="310" width="220" height="50" rx="8" fill="#fff3e0" stroke="#e65100" stroke-width="2"/>
+  <text x="450" y="330" text-anchor="middle" fill="#e65100" font-weight="bold" font-size="14">MySQL — book schema</text>
+  <text x="450" y="348" text-anchor="middle" fill="#555" font-size="10">Ticket, Seats, Purchase, Movie, …</text>
+  <line x1="300" y1="250" x2="400" y2="308" stroke="#666" marker-end="url(#a5)"/>
+  <line x1="600" y1="250" x2="500" y2="308" stroke="#00838f" stroke-dasharray="4" marker-end="url(#a5)"/>
+
+  <!-- Labels on arrows -->
+  <text x="320" y="285" fill="#c62828" font-size="10" font-style="italic">SQL (locks, writes)</text>
+  <text x="520" y="285" fill="#00838f" font-size="10" font-style="italic">cache miss → DB</text>
+
+  <!-- Read path -->
+  <rect x="60" y="200" width="100" height="40" rx="6" fill="#e8f5e9" stroke="#2e7d32"/>
+  <text x="110" y="216" text-anchor="middle" fill="#2e7d32" font-weight="bold" font-size="10">Read Path</text>
+  <text x="110" y="232" text-anchor="middle" fill="#555" font-size="9">(movies, venues)</text>
+  <line x1="160" y1="220" x2="198" y2="220" stroke="#2e7d32" marker-end="url(#a5)"/>
+  <line x1="110" y1="200" x2="110" y2="180" stroke="#2e7d32" stroke-dasharray="3"/>
+  <text x="110" y="175" text-anchor="middle" fill="#2e7d32" font-size="9">L2 HIT → skip DB</text>
+
+  <!-- Write path -->
+  <rect x="720" y="200" width="100" height="40" rx="6" fill="#fce4ec" stroke="#c62828"/>
+  <text x="770" y="216" text-anchor="middle" fill="#c62828" font-weight="bold" font-size="10">Write Path</text>
+  <text x="770" y="232" text-anchor="middle" fill="#555" font-size="9">(seats, tickets)</text>
+  <line x1="700" y1="225" x2="720" y2="225" stroke="#c62828" marker-end="url(#a5)"/>
+  <line x1="770" y1="240" x2="770" y2="270" stroke="#c62828" stroke-dasharray="3"/>
+  <text x="770" y="285" text-anchor="middle" fill="#c62828" font-size="9">always → DB</text>
+
+  <!-- Invalidation arrow -->
+  <line x1="450" y1="360" x2="600" y2="380" stroke="#f85149" stroke-width="1.5" stroke-dasharray="5" marker-end="url(#a5)"/>
+  <rect x="530" y="380" width="180" height="35" rx="4" fill="#fce4ec" stroke="#f85149"/>
+  <text x="620" y="395" text-anchor="middle" fill="#f85149" font-weight="bold" font-size="10">Commit → Cache Invalidation</text>
+  <text x="620" y="410" text-anchor="middle" fill="#555" font-size="9">timestamps bump, stale entries evicted</text>
+
+  <!-- PaymentService -->
+  <rect x="50" y="310" width="160" height="50" rx="6" fill="#ede7f6" stroke="#4a148c" stroke-width="1.5"/>
+  <text x="130" y="330" text-anchor="middle" fill="#4a148c" font-weight="bold">PaymentService</text>
+  <text x="130" y="348" text-anchor="middle" fill="#555" font-size="10">Braintree sale()</text>
+  <line x1="250" y1="120" x2="130" y2="308" stroke="#4a148c" stroke-dasharray="4" marker-end="url(#a5)"/>
+
+  <!-- Kafka -->
+  <rect x="50" y="420" width="160" height="45" rx="6" fill="#e0f7fa" stroke="#00838f" stroke-width="1.5"/>
+  <text x="130" y="440" text-anchor="middle" fill="#00838f" font-weight="bold">KafkaMessageProducer</text>
+  <text x="130" y="455" text-anchor="middle" fill="#555" font-size="10">ios-movies-notifications2</text>
+  <line x1="130" y1="360" x2="130" y2="418" stroke="#00838f" stroke-dasharray="4" marker-end="url(#a5)"/>
+</svg>
+</div>
+
+<h3>10. Key Source Locations</h3>
+<table>
+  <tr><th>Concern</th><th>File</th></tr>
+  <tr><td>Checkout orchestration</td><td><code>mbooks-quarkus/…/rest/BookController.java</code> → <code>fullcheckout2()</code></td></tr>
+  <tr><td>Ticket reservation &amp; rollback</td><td><code>mbooks-quarkus/…/booking/TicketService.java</code></td></tr>
+  <tr><td>Booking delegation</td><td><code>mbooks-quarkus/…/service/BookingHandlerImpl.java</code></td></tr>
+  <tr><td>All Hibernate operations</td><td><code>mbooks-quarkus/…/db/DAO.java</code> (singleton, 1 100+ lines)</td></tr>
+  <tr><td>SessionFactory bootstrap</td><td><code>mbooks-quarkus/…/db/HibernateUtil.java</code></td></tr>
+  <tr><td>Hibernate config</td><td><code>mbooks-quarkus/src/main/resources/hibernate.cfg.xml</code></td></tr>
+  <tr><td>Infinispan cache config</td><td><code>mbooks-quarkus/src/main/resources/infinispan-configs-local.xml</code></td></tr>
+  <tr><td>Braintree payment</td><td><code>mbooks-quarkus/…/booking/PaymentService.java</code></td></tr>
+  <tr><td>Purchase lookup</td><td><code>mbooks-quarkus/…/booking/PurchaseDAO.java</code></td></tr>
+  <tr><td>Entity definitions</td><td><code>mbooks-quarkus/…/api/</code> — Movie, Venues, Location, Screen, ScreeningDates, Seats, Ticket, Purchase</td></tr>
+</table>
+</section>
+
 <!-- ──────── REALTIME ──────── -->
 <section id="realtime">
 <h2>Realtime / Kafka + WebSocket</h2>
@@ -532,6 +777,215 @@
   <tr><td><code>ios-movies-notifications2</code></td><td>mbooks KafkaMessageProducer</td><td>mbook KafkaMoviesListener → WebSocketServer</td><td>Movie catalog changes, new screenings</td></tr>
 </table>
 <p>Both WebSocket servers expose <code>@ServerEndpoint("/ws")</code>. Apache proxies WebSocket upgrades at <code>/mbook-1/ws</code> and <code>/mbooks-1/ws</code>.</p>
+</section>
+
+<!-- ──────── REGISTRATION & VOUCHER FLOW ──────── -->
+<section id="registration-flow">
+<h2>Registration &amp; Voucher Flow</h2>
+
+<div class="diagram-container">
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 900 600" font-family="Arial,sans-serif" font-size="12">
+  <rect width="900" height="600" fill="#f8f9fa" rx="8"/>
+  <defs><marker id="ar" markerWidth="8" markerHeight="6" refX="8" refY="3" orient="auto"><path d="M0,0 L8,3 L0,6 Z" fill="#666"/></marker></defs>
+
+  <!-- Swim lanes -->
+  <text x="100" y="25" text-anchor="middle" fill="#1976d2" font-weight="bold" font-size="14">Client</text>
+  <text x="320" y="25" text-anchor="middle" fill="#2e7d32" font-weight="bold" font-size="14">dalogin</text>
+  <text x="550" y="25" text-anchor="middle" fill="#c62828" font-weight="bold" font-size="14">MySQL login_</text>
+  <text x="770" y="25" text-anchor="middle" fill="#7b1fa2" font-weight="bold" font-size="14">Email</text>
+
+  <line x1="100" y1="35" x2="100" y2="590" stroke="#1976d2" stroke-width="1" stroke-dasharray="4 2"/>
+  <line x1="320" y1="35" x2="320" y2="590" stroke="#2e7d32" stroke-width="1" stroke-dasharray="4 2"/>
+  <line x1="550" y1="35" x2="550" y2="590" stroke="#c62828" stroke-width="1" stroke-dasharray="4 2"/>
+  <line x1="770" y1="35" x2="770" y2="590" stroke="#7b1fa2" stroke-width="1" stroke-dasharray="4 2"/>
+
+  <!-- Path A: With voucher -->
+  <rect x="10" y="45" width="180" height="25" rx="4" fill="#e8eaf6" stroke="#283593"/>
+  <text x="100" y="62" text-anchor="middle" fill="#283593" font-weight="bold" font-size="11">PATH A: With Voucher</text>
+
+  <!-- Step 1 -->
+  <rect x="40" y="80" width="120" height="30" rx="4" fill="#e3f2fd" stroke="#1976d2"/>
+  <text x="100" y="99" text-anchor="middle" fill="#1976d2" font-size="11">Enter voucher code</text>
+  <line x1="160" y1="95" x2="260" y2="110" stroke="#666" stroke-width="1.5" marker-end="url(#ar)"/>
+  <text x="210" y="100" text-anchor="middle" fill="#666" font-size="9">GET /login/Voucher</text>
+
+  <!-- Step 2 -->
+  <rect x="260" y="110" width="120" height="30" rx="4" fill="#e8f5e9" stroke="#2e7d32"/>
+  <text x="320" y="129" text-anchor="middle" fill="#2e7d32" font-size="11">Voucher servlet</text>
+  <line x1="380" y1="125" x2="490" y2="140" stroke="#666" stroke-width="1.5" marker-end="url(#ar)"/>
+  <text x="435" y="132" text-anchor="middle" fill="#666" font-size="9">CALL get_voucher()</text>
+
+  <rect x="490" y="140" width="120" height="25" rx="4" fill="#fce4ec" stroke="#c62828"/>
+  <text x="550" y="157" text-anchor="middle" fill="#c62828" font-size="11">Check state='free'</text>
+  <line x1="490" y1="155" x2="380" y2="170" stroke="#666" stroke-width="1.5" marker-end="url(#ar)"/>
+
+  <!-- Step 3: Register -->
+  <rect x="260" y="170" width="120" height="40" rx="4" fill="#e8f5e9" stroke="#2e7d32"/>
+  <text x="320" y="188" text-anchor="middle" fill="#2e7d32" font-size="11">Registration</text>
+  <text x="320" y="202" text-anchor="middle" fill="#555" font-size="9">set_voucher → 'processing'</text>
+
+  <line x1="380" y1="190" x2="490" y2="205" stroke="#666" stroke-width="1.5" marker-end="url(#ar)"/>
+  <text x="435" y="198" text-anchor="middle" fill="#666" font-size="9">CALL insert_voucher()</text>
+
+  <rect x="490" y="205" width="120" height="40" rx="4" fill="#fce4ec" stroke="#c62828"/>
+  <text x="550" y="222" text-anchor="middle" fill="#c62828" font-size="11">INSERT logins</text>
+  <text x="550" y="236" text-anchor="middle" fill="#555" font-size="9">triggers: UUID, voucher</text>
+
+  <!-- Step 4: activation token -->
+  <line x1="490" y1="233" x2="380" y2="258" stroke="#666" stroke-width="1.5" marker-end="url(#ar)"/>
+  <rect x="260" y="255" width="120" height="35" rx="4" fill="#e8f5e9" stroke="#2e7d32"/>
+  <text x="320" y="272" text-anchor="middle" fill="#2e7d32" font-size="11">copy_token2</text>
+  <text x="320" y="285" text-anchor="middle" fill="#555" font-size="9">get activation token</text>
+
+  <!-- Step 5: Send email -->
+  <line x1="380" y1="275" x2="710" y2="295" stroke="#7b1fa2" stroke-width="1.5" stroke-dasharray="5 3" marker-end="url(#ar)"/>
+  <rect x="710" y="295" width="120" height="30" rx="4" fill="#f3e5f5" stroke="#7b1fa2"/>
+  <text x="770" y="314" text-anchor="middle" fill="#7b1fa2" font-size="11">📧 Activation email</text>
+
+  <!-- Step 6: Activate -->
+  <rect x="40" y="340" width="120" height="30" rx="4" fill="#e3f2fd" stroke="#1976d2"/>
+  <text x="100" y="359" text-anchor="middle" fill="#1976d2" font-size="11">Enter code from email</text>
+  <line x1="160" y1="355" x2="260" y2="370" stroke="#666" stroke-width="1.5" marker-end="url(#ar)"/>
+  <text x="210" y="362" text-anchor="middle" fill="#666" font-size="9">POST /login/activation</text>
+
+  <rect x="260" y="370" width="120" height="35" rx="4" fill="#e8f5e9" stroke="#2e7d32"/>
+  <text x="320" y="387" text-anchor="middle" fill="#2e7d32" font-size="11">RegActivation</text>
+  <text x="320" y="400" text-anchor="middle" fill="#555" font-size="9">ActiveVoucherFilter</text>
+
+  <line x1="380" y1="387" x2="490" y2="407" stroke="#666" stroke-width="1.5" marker-end="url(#ar)"/>
+  <text x="435" y="398" text-anchor="middle" fill="#666" font-size="9">activate_voucher()</text>
+
+  <rect x="490" y="407" width="130" height="35" rx="4" fill="#fce4ec" stroke="#c62828"/>
+  <text x="555" y="424" text-anchor="middle" fill="#c62828" font-size="11">state → 'registered'</text>
+  <text x="555" y="437" text-anchor="middle" fill="#555" font-size="9">isActivated = 1</text>
+
+  <!-- Path B: Without voucher -->
+  <rect x="10" y="465" width="220" height="25" rx="4" fill="#fff3e0" stroke="#e65100"/>
+  <text x="120" y="482" text-anchor="middle" fill="#e65100" font-weight="bold" font-size="11">PATH B: Without Voucher</text>
+
+  <rect x="40" y="500" width="120" height="30" rx="4" fill="#e3f2fd" stroke="#1976d2"/>
+  <text x="100" y="519" text-anchor="middle" fill="#1976d2" font-size="11">Register (no voucher)</text>
+  <line x1="160" y1="515" x2="260" y2="530" stroke="#666" stroke-width="1.5" marker-end="url(#ar)"/>
+  <text x="195" y="528" text-anchor="middle" fill="#666" font-size="8">POST /login/RegistrationWithoutVoucher</text>
+
+  <rect x="260" y="530" width="120" height="35" rx="4" fill="#e8f5e9" stroke="#2e7d32"/>
+  <text x="320" y="547" text-anchor="middle" fill="#2e7d32" font-size="11">RegistrationWOV</text>
+  <text x="320" y="560" text-anchor="middle" fill="#555" font-size="9">inserts user directly</text>
+
+  <line x1="380" y1="547" x2="490" y2="557" stroke="#666" stroke-width="1.5" marker-end="url(#ar)"/>
+  <rect x="490" y="550" width="120" height="30" rx="4" fill="#fce4ec" stroke="#c62828"/>
+  <text x="550" y="569" text-anchor="middle" fill="#c62828" font-size="11">INSERT logins</text>
+
+  <line x1="260" y1="548" x2="160" y2="565" stroke="#666" stroke-width="1.5" marker-end="url(#ar)"/>
+  <rect x="40" y="565" width="120" height="20" rx="4" fill="#e8f5e9" stroke="#2e7d32"/>
+  <text x="100" y="579" text-anchor="middle" fill="#2e7d32" font-size="10">✅ Can login immediately</text>
+</svg>
+</div>
+
+<h3>Voucher State Machine</h3>
+<div class="card">
+<p>The voucher lifecycle is managed via the <code>voucher_states</code> table with three states:</p>
+<table>
+  <tr><th>State</th><th>Meaning</th><th>Transition</th></tr>
+  <tr><td><code>free</code></td><td>Voucher is available for use</td><td>Created when admin inserts voucher; <code>get_voucher()</code> verifies this state.</td></tr>
+  <tr><td><code>processing</code></td><td>Voucher claimed, activation pending</td><td><code>set_voucher()</code> during registration. User must enter the activation code (token2 from email).</td></tr>
+  <tr><td><code>registered</code></td><td>Voucher fully activated</td><td><code>register_voucher()</code> → <code>activate_voucher()</code> after successful email code entry. <code>isActivated</code> flag set to 1.</td></tr>
+</table>
+<p><strong>Rollback:</strong> If registration fails after <code>set_voucher</code>, the stored procedure <code>reset_voucher()</code> resets the voucher to <code>free</code> and deletes the partially-created user and voucher records.</p>
+<p><strong>isActivated check:</strong> On login, <code>HelloWorld</code> calls <code>isActivated(user)</code>. If the user's voucher is not yet activated, login returns HTTP <strong>300</strong> with <code>"activation": "0"</code>, prompting the client to show the activation screen.</p>
+</div>
+</section>
+
+<!-- ──────── PASSWORD RESET FLOW ──────── -->
+<section id="password-reset-flow">
+<h2>Password Reset Flow</h2>
+
+<div class="diagram-container">
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 900 420" font-family="Arial,sans-serif" font-size="12">
+  <rect width="900" height="420" fill="#f8f9fa" rx="8"/>
+  <defs><marker id="ap" markerWidth="8" markerHeight="6" refX="8" refY="3" orient="auto"><path d="M0,0 L8,3 L0,6 Z" fill="#666"/></marker></defs>
+
+  <!-- Swim lanes -->
+  <text x="100" y="25" text-anchor="middle" fill="#1976d2" font-weight="bold" font-size="14">Client</text>
+  <text x="350" y="25" text-anchor="middle" fill="#2e7d32" font-weight="bold" font-size="14">dalogin</text>
+  <text x="580" y="25" text-anchor="middle" fill="#c62828" font-weight="bold" font-size="14">MySQL login_</text>
+  <text x="790" y="25" text-anchor="middle" fill="#7b1fa2" font-weight="bold" font-size="14">Email</text>
+
+  <line x1="100" y1="35" x2="100" y2="410" stroke="#1976d2" stroke-width="1" stroke-dasharray="4 2"/>
+  <line x1="350" y1="35" x2="350" y2="410" stroke="#2e7d32" stroke-width="1" stroke-dasharray="4 2"/>
+  <line x1="580" y1="35" x2="580" y2="410" stroke="#c62828" stroke-width="1" stroke-dasharray="4 2"/>
+  <line x1="790" y1="35" x2="790" y2="410" stroke="#7b1fa2" stroke-width="1" stroke-dasharray="4 2"/>
+
+  <!-- Step 1: Request reset -->
+  <rect x="30" y="50" width="140" height="30" rx="4" fill="#e3f2fd" stroke="#1976d2"/>
+  <text x="100" y="69" text-anchor="middle" fill="#1976d2" font-size="11">Enter email address</text>
+  <line x1="170" y1="65" x2="280" y2="85" stroke="#666" stroke-width="1.5" marker-end="url(#ap)"/>
+  <text x="225" y="75" text-anchor="middle" fill="#666" font-size="9">POST /login/ChangePassword</text>
+
+  <rect x="280" y="85" width="140" height="30" rx="4" fill="#e8f5e9" stroke="#2e7d32"/>
+  <text x="350" y="104" text-anchor="middle" fill="#2e7d32" font-size="11">ChangePassword servlet</text>
+
+  <line x1="420" y1="100" x2="510" y2="115" stroke="#666" stroke-width="1.5" marker-end="url(#ap)"/>
+  <text x="465" y="108" text-anchor="middle" fill="#666" font-size="9">CALL find_email()</text>
+
+  <rect x="510" y="115" width="140" height="25" rx="4" fill="#fce4ec" stroke="#c62828"/>
+  <text x="580" y="132" text-anchor="middle" fill="#c62828" font-size="11">Verify email exists</text>
+
+  <!-- Step 2: Generate code -->
+  <line x1="510" y1="133" x2="420" y2="155" stroke="#666" stroke-width="1.5" marker-end="url(#ap)"/>
+  <rect x="280" y="150" width="140" height="35" rx="4" fill="#e8f5e9" stroke="#2e7d32"/>
+  <text x="350" y="167" text-anchor="middle" fill="#2e7d32" font-size="11">forgot_password()</text>
+  <text x="350" y="180" text-anchor="middle" fill="#555" font-size="9">generates reset token</text>
+
+  <line x1="420" y1="170" x2="510" y2="185" stroke="#666" stroke-width="1.5" marker-end="url(#ap)"/>
+  <rect x="510" y="185" width="140" height="30" rx="4" fill="#fce4ec" stroke="#c62828"/>
+  <text x="580" y="202" text-anchor="middle" fill="#c62828" font-size="11">forgotPsw trigger</text>
+  <text x="580" y="212" text-anchor="middle" fill="#555" font-size="9">generates forgotRequestToken</text>
+
+  <!-- Step 3: Send email -->
+  <line x1="420" y1="175" x2="720" y2="220" stroke="#7b1fa2" stroke-width="1.5" stroke-dasharray="5 3" marker-end="url(#ap)"/>
+  <rect x="720" y="220" width="140" height="30" rx="4" fill="#f3e5f5" stroke="#7b1fa2"/>
+  <text x="790" y="239" text-anchor="middle" fill="#7b1fa2" font-size="11">📧 Reset code email</text>
+
+  <!-- Step 4: Enter code -->
+  <rect x="30" y="265" width="140" height="30" rx="4" fill="#e3f2fd" stroke="#1976d2"/>
+  <text x="100" y="284" text-anchor="middle" fill="#1976d2" font-size="11">Enter reset code</text>
+  <line x1="170" y1="280" x2="280" y2="295" stroke="#666" stroke-width="1.5" marker-end="url(#ap)"/>
+  <text x="215" y="290" text-anchor="middle" fill="#666" font-size="8">POST /login/ChangePasswordCode</text>
+
+  <rect x="280" y="295" width="140" height="30" rx="4" fill="#e8f5e9" stroke="#2e7d32"/>
+  <text x="350" y="314" text-anchor="middle" fill="#2e7d32" font-size="11">ChangePasswordCode</text>
+
+  <line x1="420" y1="310" x2="510" y2="320" stroke="#666" stroke-width="1.5" marker-end="url(#ap)"/>
+  <text x="465" y="316" text-anchor="middle" fill="#666" font-size="9">CALL find_email2()</text>
+
+  <rect x="510" y="318" width="140" height="25" rx="4" fill="#fce4ec" stroke="#c62828"/>
+  <text x="580" y="335" text-anchor="middle" fill="#c62828" font-size="11">Verify code + time</text>
+
+  <!-- Step 5: New password -->
+  <rect x="30" y="355" width="140" height="30" rx="4" fill="#e3f2fd" stroke="#1976d2"/>
+  <text x="100" y="374" text-anchor="middle" fill="#1976d2" font-size="11">Enter new password</text>
+  <line x1="170" y1="370" x2="280" y2="380" stroke="#666" stroke-width="1.5" marker-end="url(#ap)"/>
+  <text x="210" y="378" text-anchor="middle" fill="#666" font-size="8">POST /login/ChangePasswordNewPassword</text>
+
+  <rect x="280" y="378" width="140" height="25" rx="4" fill="#e8f5e9" stroke="#2e7d32"/>
+  <text x="350" y="395" text-anchor="middle" fill="#2e7d32" font-size="11">update_password()</text>
+
+  <line x1="420" y1="390" x2="510" y2="395" stroke="#666" stroke-width="1.5" marker-end="url(#ap)"/>
+  <rect x="510" y="390" width="140" height="20" rx="4" fill="#e8f5e9" stroke="#2e7d32"/>
+  <text x="580" y="404" text-anchor="middle" fill="#2e7d32" font-size="10">hash_ updated ✅</text>
+</svg>
+</div>
+
+<h3>Three-Step Flow</h3>
+<div class="card">
+<ol>
+  <li><strong>Request</strong> (<code>POST /login/ChangePassword</code>) — Client sends email. The servlet calls <code>find_email()</code> to verify the email exists, then <code>forgot_password(email, time)</code> which inserts/updates the <code>forgotPsw</code> table. The <code>forgotPsw_BEFORE_INSERT</code> trigger auto-generates a random <code>forgotRequestToken</code>. An email is sent via <code>SendHtmlEmail</code> with the token.</li>
+  <li><strong>Verify Code</strong> (<code>POST /login/ChangePasswordCode</code>) — Protected by <code>ChangePswFilter</code>. Client sends email + code (SHA512-hashed). The servlet calls <code>find_email2(email)</code> to retrieve the stored token + timestamp. If the code matches and the request time is within the expiry window (configured via <code>TIME</code> context param, default 8,640,000 ms = 2.4 hours), the flow proceeds.</li>
+  <li><strong>Set New Password</strong> (<code>POST /login/ChangePasswordNewPassword</code>) — Client sends email + code + new password hash (SHA3-512). The servlet calls <code>update_password(pass, email)</code> which updates the <code>hash_</code> column and invalidates the reset token by setting <code>isValid=0</code>.</li>
+</ol>
+<p><strong>Security notes:</strong> The confirmation code is <code>SHA512</code>-hashed by the client before sending. The new password is <code>SHA3-512</code>-hashed (same as login). Both web and iOS clients use CryptoJS for these operations. The <code>ChangePswFilter</code> ensures steps 2 and 3 have a valid session context before proceeding.</p>
+</div>
 </section>
 
 <!-- ──────── SERVICE: dalogin ──────── -->
@@ -671,6 +1125,183 @@
   <tr><td>/webapi/myresource/images/profiles/{file}</td><td>Profile pictures from <code>pictures/profiles/</code></td></tr>
 </table>
 <p>Config property <code>pictures.base-dir</code> (env: <code>PICTURES_BASE_DIR</code>) defaults to <code>../pictures</code>. In K8s it's set to <code>/pictures</code> with an emptyDir volume that must be populated after deployment.</p>
+</section>
+
+<!-- ──────── WEB FRONTEND: OVERVIEW ──────── -->
+<section id="web-overview">
+<h2>Web Frontend: AngularJS Client</h2>
+<p><span class="badge badge-blue">AngularJS 1.x</span> <span class="badge badge-blue">CryptoJS</span> <span class="badge badge-green">Linear Template</span></p>
+<p>The web UI is a single-page AngularJS 1.x application served as static HTML/JS by dalogin-quarkus. Originally built with the "Linear" responsive template and adapted from WildFly-era JSP pages to static HTML. All pages live in <code>dalogin-quarkus/src/main/resources/META-INF/resources/</code>.</p>
+
+<h3>Technology Stack</h3>
+<div class="card">
+<table>
+  <tr><th>Library</th><th>Version</th><th>Purpose</th></tr>
+  <tr><td>AngularJS</td><td>1.x</td><td>MVC framework — controllers, data binding, HTTP interceptors</td></tr>
+  <tr><td>CryptoJS</td><td>3.x</td><td>SHA3, SHA512, HMAC-SHA512, Base64 — client-side crypto for login handshake</td></tr>
+  <tr><td>angular-utf8-base64</td><td>—</td><td>Base64 encoding for authorization header</td></tr>
+  <tr><td>ng-device-detector</td><td>—</td><td>Browser/device detection for deviceId generation</td></tr>
+  <tr><td>angular-animate</td><td>—</td><td>Transition animations</td></tr>
+  <tr><td>angular-route</td><td>—</td><td>Client-side routing (reserved for future SPA routing)</td></tr>
+</table>
+</div>
+
+<h3>HTTP Interceptor Chain</h3>
+<div class="card">
+<p>The AngularJS app registers a custom HTTP interceptor and request transformer in <code>app.js</code>:</p>
+<ol>
+  <li><strong>Request interceptor</strong> — Checks that <code>localStorage.hmacSecret</code> exists. Rejects unsigned requests. Sets <code>X-URL</code> header to the request URL for HMAC message construction.</li>
+  <li><strong>Request transformer</strong> — For every POST with a body:
+    <ul>
+      <li>Adds <code>X-SESSION-TOKEN</code> header (if available in localStorage)</li>
+      <li>Sets <code>X-MICRO-TIME</code> to current epoch milliseconds (replay protection)</li>
+      <li>Computes <code>X-HMAC-HASH = HMAC-SHA512(url:body:microTime:contentLength, hmacSecret)</code></li>
+      <li>Sets <code>X-URL</code> to the browser-generated deviceId</li>
+    </ul>
+  </li>
+  <li><strong>Response error handler</strong> — Catches 502 responses (session expired, forwarded from AuthFilter)</li>
+</ol>
+</div>
+
+<h3>Login Handshake (Web Client)</h3>
+<div class="card">
+<p>The web login in <code>LoginController</code> mirrors the iOS HMAC flow:</p>
+<ol>
+  <li><strong>Hash password</strong>: <code>SHA3(password, {outputLength: 512})</code></li>
+  <li><strong>Generate HMAC secret</strong>: <code>HmacSHA512(username, encodeURIComponent(passwordHash))</code> → stored in <code>localStorage.hmacSecret</code></li>
+  <li><strong>Generate deviceId</strong>: Browser fingerprint from <code>navigator.mimeTypes.length + userAgent + plugins.length + screen.height + width + pixelDepth</code></li>
+  <li><strong>POST to <code>/login/HelloWorld</code></strong> with body <code>user=&amp;pswrd=&amp;deviceId=</code>, headers: <code>Content-Type: application/x-www-form-urlencoded</code>, <code>Authorization: Basic btoa(user:hash)</code></li>
+  <li><strong>On success</strong>: Store <code>X-Token</code> in localStorage, rotate HMAC secret to <code>SHA512(X-Token, hmacSecret)</code></li>
+  <li><strong>Redirect</strong>: If session is "raked" → <code>/login/main.html</code> (movie listing). If mobile device detected → <code>/login/tabularasa.html</code> (stripped UI).</li>
+</ol>
+</div>
+</section>
+
+<!-- ──────── WEB FRONTEND: PAGES ──────── -->
+<section id="web-pages">
+<h2>Web Pages &amp; Navigation</h2>
+
+<div class="diagram-container">
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 900 340" font-family="Arial,sans-serif" font-size="11">
+  <rect width="900" height="340" fill="#f8f9fa" rx="8"/>
+  <defs><marker id="aw" markerWidth="8" markerHeight="6" refX="8" refY="3" orient="auto"><path d="M0,0 L8,3 L0,6 Z" fill="#1976d2"/></marker></defs>
+
+  <!-- Auth pages -->
+  <rect x="20" y="30" width="140" height="55" rx="8" fill="#e3f2fd" stroke="#1976d2" stroke-width="2"/>
+  <text x="90" y="52" text-anchor="middle" fill="#1976d2" font-weight="bold">index.html</text>
+  <text x="90" y="68" text-anchor="middle" fill="#555" font-size="9">Login page</text>
+  <text x="90" y="80" text-anchor="middle" fill="#888" font-size="8">LoginController</text>
+
+  <rect x="180" y="30" width="140" height="55" rx="8" fill="#e3f2fd" stroke="#1976d2" stroke-width="2"/>
+  <text x="250" y="52" text-anchor="middle" fill="#1976d2" font-weight="bold">register.html</text>
+  <text x="250" y="68" text-anchor="middle" fill="#555" font-size="9">Registration</text>
+  <text x="250" y="80" text-anchor="middle" fill="#888" font-size="8">(links to voucher flow)</text>
+
+  <rect x="340" y="30" width="170" height="55" rx="8" fill="#e3f2fd" stroke="#1976d2" stroke-width="2"/>
+  <text x="425" y="52" text-anchor="middle" fill="#1976d2" font-weight="bold">changepassword.html</text>
+  <text x="425" y="68" text-anchor="middle" fill="#555" font-size="9">Password reset</text>
+  <text x="425" y="80" text-anchor="middle" fill="#888" font-size="8">ForgetPSWController</text>
+
+  <line x1="160" y1="57" x2="178" y2="57" stroke="#1976d2" stroke-width="1.5" marker-end="url(#aw)"/>
+  <line x1="320" y1="57" x2="338" y2="57" stroke="#1976d2" stroke-width="1.5" marker-end="url(#aw)"/>
+
+  <!-- Main pages -->
+  <rect x="20" y="120" width="140" height="55" rx="8" fill="#e8f5e9" stroke="#2e7d32" stroke-width="2"/>
+  <text x="90" y="142" text-anchor="middle" fill="#2e7d32" font-weight="bold">main.html</text>
+  <text x="90" y="158" text-anchor="middle" fill="#555" font-size="9">Post-login landing</text>
+  <text x="90" y="170" text-anchor="middle" fill="#888" font-size="8">Movie listing / links</text>
+
+  <rect x="180" y="120" width="140" height="55" rx="8" fill="#fff8e1" stroke="#f57f17" stroke-width="2"/>
+  <text x="250" y="142" text-anchor="middle" fill="#f57f17" font-weight="bold">venues.html</text>
+  <text x="250" y="158" text-anchor="middle" fill="#555" font-size="9">Venue selection</text>
+  <text x="250" y="170" text-anchor="middle" fill="#888" font-size="8">for selected movie</text>
+
+  <rect x="340" y="120" width="140" height="55" rx="8" fill="#fff8e1" stroke="#f57f17" stroke-width="2"/>
+  <text x="410" y="142" text-anchor="middle" fill="#f57f17" font-weight="bold">dates.html</text>
+  <text x="410" y="158" text-anchor="middle" fill="#555" font-size="9">Screening dates</text>
+  <text x="410" y="170" text-anchor="middle" fill="#888" font-size="8">for selected venue</text>
+
+  <line x1="90" y1="85" x2="90" y2="118" stroke="#2e7d32" stroke-width="1.5" marker-end="url(#aw)"/>
+  <text x="68" y="105" fill="#2e7d32" font-size="8">login OK</text>
+  <line x1="160" y1="147" x2="178" y2="147" stroke="#f57f17" stroke-width="1.5" marker-end="url(#aw)"/>
+  <line x1="320" y1="147" x2="338" y2="147" stroke="#f57f17" stroke-width="1.5" marker-end="url(#aw)"/>
+
+  <!-- Mobile page -->
+  <rect x="540" y="30" width="140" height="55" rx="8" fill="#f3e5f5" stroke="#7b1fa2" stroke-width="2"/>
+  <text x="610" y="52" text-anchor="middle" fill="#7b1fa2" font-weight="bold">tabularasa.html</text>
+  <text x="610" y="68" text-anchor="middle" fill="#555" font-size="9">Mobile-stripped UI</text>
+  <text x="610" y="80" text-anchor="middle" fill="#888" font-size="8">auto-redirect on M flag</text>
+
+  <!-- Layout pages -->
+  <rect x="20" y="220" width="140" height="55" rx="8" fill="#e0f7fa" stroke="#00838f" stroke-width="2"/>
+  <text x="90" y="242" text-anchor="middle" fill="#00838f" font-weight="bold">left-sidebar.html</text>
+  <text x="90" y="258" text-anchor="middle" fill="#555" font-size="9">Layout template</text>
+
+  <rect x="180" y="220" width="150" height="55" rx="8" fill="#e0f7fa" stroke="#00838f" stroke-width="2"/>
+  <text x="255" y="242" text-anchor="middle" fill="#00838f" font-weight="bold">right-sidebar.html</text>
+  <text x="255" y="258" text-anchor="middle" fill="#555" font-size="9">Layout template</text>
+
+  <rect x="350" y="220" width="140" height="55" rx="8" fill="#e0f7fa" stroke="#00838f" stroke-width="2"/>
+  <text x="420" y="242" text-anchor="middle" fill="#00838f" font-weight="bold">no-sidebar.html</text>
+  <text x="420" y="258" text-anchor="middle" fill="#555" font-size="9">Layout template</text>
+
+  <rect x="510" y="220" width="160" height="55" rx="8" fill="#ede7f6" stroke="#4a148c" stroke-width="2"/>
+  <text x="590" y="242" text-anchor="middle" fill="#4a148c" font-weight="bold">loginbar.html</text>
+  <text x="590" y="258" text-anchor="middle" fill="#555" font-size="9">Login form component</text>
+
+  <rect x="690" y="220" width="170" height="55" rx="8" fill="#ede7f6" stroke="#4a148c" stroke-width="2"/>
+  <text x="775" y="242" text-anchor="middle" fill="#4a148c" font-weight="bold">registerbar.html</text>
+  <text x="775" y="258" text-anchor="middle" fill="#555" font-size="9">Register form component</text>
+
+  <!-- WebSocket page -->
+  <rect x="540" y="120" width="160" height="55" rx="8" fill="#ede7f6" stroke="#4a148c" stroke-width="2"/>
+  <text x="620" y="142" text-anchor="middle" fill="#4a148c" font-weight="bold">websocketecho.html</text>
+  <text x="620" y="158" text-anchor="middle" fill="#555" font-size="9">WS test page</text>
+  <text x="620" y="170" text-anchor="middle" fill="#888" font-size="8">realtime debug tool</text>
+
+  <!-- Labels -->
+  <text x="90" y="310" text-anchor="middle" fill="#00838f" font-weight="bold" font-size="10">Linear Template Layouts</text>
+  <text x="680" y="310" text-anchor="middle" fill="#4a148c" font-weight="bold" font-size="10">Shared Components</text>
+</svg>
+</div>
+
+<h3>HTML Pages Inventory</h3>
+<table>
+  <tr><th>File</th><th>Purpose</th><th>Controller / API Calls</th></tr>
+  <tr><td><code>index.html</code></td><td>Login page — username/password form with HMAC-SHA512 handshake</td><td><code>LoginController</code> → <code>POST /login/HelloWorld</code></td></tr>
+  <tr><td><code>register.html</code></td><td>User registration — voucher-based or open registration</td><td><code>POST /login/Registration</code> or <code>/RegistrationWithoutVoucher</code></td></tr>
+  <tr><td><code>changepassword.html</code></td><td>Forgot password — three-step email-code-newpassword flow</td><td><code>ForgetPSWController</code> → <code>POST /login/forgotPSw</code>, <code>/forgotPSwCode</code>, <code>/forgotPSwNewPSw</code></td></tr>
+  <tr><td><code>main.html</code></td><td>Post-login landing page — movie listing, navigation links</td><td>Redirected to after successful login</td></tr>
+  <tr><td><code>venues.html</code></td><td>Venue selection for a chosen movie</td><td><code>GET /mbooks-1/rest/book/venues/{movieId}</code></td></tr>
+  <tr><td><code>dates.html</code></td><td>Screening dates and seat availability</td><td><code>GET /mbooks-1/rest/book/seats/{screenId}</code></td></tr>
+  <tr><td><code>tabularasa.html</code></td><td>Stripped-down UI for mobile web (auto-redirected when M flag detected)</td><td>Same as main.html, minimal layout</td></tr>
+  <tr><td><code>websocketecho.html</code></td><td>WebSocket test/debug page for realtime notifications</td><td>Connects to <code>/mbook-1/ws</code></td></tr>
+  <tr><td><code>left-sidebar.html</code></td><td>Linear template layout — content + left sidebar</td><td>Layout wrapper (no API)</td></tr>
+  <tr><td><code>right-sidebar.html</code></td><td>Linear template layout — content + right sidebar</td><td>Layout wrapper (no API)</td></tr>
+  <tr><td><code>no-sidebar.html</code></td><td>Linear template layout — full-width content</td><td>Layout wrapper (no API)</td></tr>
+  <tr><td><code>loginbar.html</code></td><td>Reusable login form partial</td><td>Embedded in layouts</td></tr>
+  <tr><td><code>registerbar.html</code></td><td>Reusable registration form partial</td><td>Embedded in layouts</td></tr>
+</table>
+
+<h3>Static Assets</h3>
+<div class="card">
+<p>JavaScript libraries are in <code>jsR/</code> folder alongside the HTML files:</p>
+<table>
+  <tr><th>File</th><th>Purpose</th></tr>
+  <tr><td><code>jsR/app.js</code></td><td>AngularJS app definition, controllers (LoginController, ForgetPSWController, myCtrl), HTTP interceptor, HMAC request transformer</td></tr>
+  <tr><td><code>jsR/angular.min.js</code></td><td>AngularJS 1.x core</td></tr>
+  <tr><td><code>jsR/angular-route.min.js</code></td><td>AngularJS routing (reserved, not actively used)</td></tr>
+  <tr><td><code>jsR/angular-animate.js</code></td><td>AngularJS animation module</td></tr>
+  <tr><td><code>jsR/hmac-sha512.js</code></td><td>CryptoJS HMAC-SHA512 implementation</td></tr>
+  <tr><td><code>jsR/sha512.js</code></td><td>CryptoJS SHA-512 hash</td></tr>
+  <tr><td><code>jsR/sha3.js</code></td><td>CryptoJS SHA-3 hash (used for password hashing)</td></tr>
+  <tr><td><code>jsR/enc-base64-min.js</code></td><td>CryptoJS Base64 encoder</td></tr>
+  <tr><td><code>jsR/angular-utf8-base64.min.js</code></td><td>AngularJS Base64 service (<code>ab-base64</code> module)</td></tr>
+  <tr><td><code>jsR/ng-device-detector.min.js</code></td><td>Device detection module</td></tr>
+  <tr><td><code>jsR/re-tree/re-tree.min.js</code></td><td>Regex tree utility (device-detector dependency)</td></tr>
+</table>
+<p>CSS, images, and fonts from the original Linear responsive template are also present under <code>css/</code>, <code>images/</code>, and <code>fonts/</code> directories.</p>
+</div>
 </section>
 
 <!-- ──────── iOS: OVERVIEW ──────── -->
@@ -1420,6 +2051,224 @@ python3 k8infra/test-login.py
 python3 k8infra/test-login-admin.py</code></pre>
 </section>
 
+<!-- ──────── ENVIRONMENT VARIABLES ──────── -->
+<section id="env-vars">
+<h2>Environment Variables Reference</h2>
+<p>Complete reference of environment variables across all services, with Kubernetes manifest values and local development defaults.</p>
+
+<h3>dalogin-quarkus</h3>
+<table>
+  <tr><th>Variable</th><th>K8s Value</th><th>Local Default</th><th>Purpose</th></tr>
+  <tr><td><code>DB_URL</code></td><td><code>jdbc:mysql://mysql:3306/login_</code></td><td><code>jdbc:mysql://localhost:3306/login_</code></td><td>JDBC URL for the login_ database. The catalog name is extracted from the last path segment via <code>SystemConstants.extractCatalog()</code>.</td></tr>
+  <tr><td><code>WILDFLY_URL</code></td><td><code>http://apache</code></td><td><code>http://localhost:8888</code></td><td>Base URL for downstream services. Named historically; in K8s it points to the Apache reverse proxy which routes to mbook/mbooks. Locally points directly to mbook.</td></tr>
+  <tr><td><code>QUARKUS_DATASOURCE_DB_KIND</code></td><td><code>mysql</code></td><td>—</td><td>Quarkus datasource type (for future Agroal integration).</td></tr>
+  <tr><td><code>QUARKUS_DATASOURCE_USERNAME</code></td><td><code>sqluser</code></td><td>—</td><td>Quarkus datasource username.</td></tr>
+  <tr><td><code>QUARKUS_DATASOURCE_PASSWORD</code></td><td><code>sqluserpw</code></td><td>—</td><td>Quarkus datasource password.</td></tr>
+  <tr><td><code>QUARKUS_DATASOURCE_JDBC_URL</code></td><td><code>jdbc:mysql://mysql:3306/login_</code></td><td>—</td><td>Quarkus JDBC URL (supplements <code>DB_URL</code>).</td></tr>
+</table>
+
+<h3>mbook-quarkus</h3>
+<table>
+  <tr><th>Variable</th><th>K8s Value</th><th>Local Default</th><th>Purpose</th></tr>
+  <tr><td><code>DB_URL</code></td><td><code>jdbc:mysql://mysql:3306/login_</code></td><td><code>jdbc:mysql://localhost:3306/login_</code></td><td>JDBC URL for the login_ database.</td></tr>
+  <tr><td><code>BOOTSTRAP_URL</code></td><td><code>kafka:9092</code></td><td><code>localhost:9092</code></td><td>Kafka bootstrap server address.</td></tr>
+  <tr><td><code>QUARKUS_OTEL_ENABLED</code></td><td><code>false</code></td><td>—</td><td>Disable OpenTelemetry agent (the jar is bundled but not used in local dev).</td></tr>
+  <tr><td><code>QUARKUS_DATASOURCE_*</code></td><td><em>(same pattern as dalogin)</em></td><td>—</td><td>Quarkus datasource config for login_ database.</td></tr>
+</table>
+
+<h3>mbooks-quarkus</h3>
+<table>
+  <tr><th>Variable</th><th>K8s Value</th><th>Local Default</th><th>Purpose</th></tr>
+  <tr><td><code>DB_URL_BOOKS</code></td><td><code>jdbc:mysql://mysql:3306/book</code></td><td><code>jdbc:mysql://localhost:3306/book</code></td><td>JDBC URL for the book database. Read by <code>HibernateUtil</code> to override <code>hibernate.cfg.xml</code> defaults.</td></tr>
+  <tr><td><code>BOOTSTRAP_URL</code></td><td><code>kafka:9092</code></td><td><code>localhost:9092</code></td><td>Kafka bootstrap server address.</td></tr>
+  <tr><td><code>QUARKUS_OTEL_ENABLED</code></td><td><code>false</code></td><td>—</td><td>Disable OpenTelemetry.</td></tr>
+  <tr><td><code>QUARKUS_DATASOURCE_*</code></td><td><em>(pointing to book schema)</em></td><td>—</td><td>Quarkus datasource config for book database.</td></tr>
+</table>
+
+<h3>simple-service-webapp-quarkus</h3>
+<table>
+  <tr><th>Variable</th><th>K8s Value</th><th>Local Default</th><th>Purpose</th></tr>
+  <tr><td><code>PICTURES_BASE_DIR</code></td><td><code>/pictures</code></td><td><code>../pictures</code></td><td>Filesystem path to the pictures directory containing <code>images/</code>, <code>movies/</code>, <code>venues/</code>, <code>profiles/</code> sub-folders.</td></tr>
+</table>
+
+<h3>Infrastructure</h3>
+<table>
+  <tr><th>Variable</th><th>Service</th><th>Value</th><th>Purpose</th></tr>
+  <tr><td><code>MYSQL_ROOT_PASSWORD</code></td><td>MySQL</td><td><code>rootpw</code></td><td>MySQL root password.</td></tr>
+  <tr><td><code>ZOO_STANDALONE_ENABLED</code></td><td>ZooKeeper</td><td><code>true</code></td><td>Run in standalone mode (single node).</td></tr>
+  <tr><td><code>ZOO_ADMINSERVER_ENABLED</code></td><td>ZooKeeper</td><td><code>false</code></td><td>Disable admin HTTP server.</td></tr>
+</table>
+</section>
+
+<!-- ──────── CONFIGURATION FILES ──────── -->
+<section id="config-files">
+<h2>Configuration Files Reference</h2>
+
+<h3>dalogin: web.xml</h3>
+<div class="card">
+<p>Located at <code>src/main/resources/META-INF/resources/WEB-INF/web.xml</code>. Defines context parameters consumed by servlets:</p>
+<table>
+  <tr><th>Parameter</th><th>Value</th><th>Used By</th></tr>
+  <tr><td><code>DBPWD</code></td><td><code>sqluserpw</code></td><td><code>CustomServletContextListener</code> → <code>DBConnectionManager</code></td></tr>
+  <tr><td><code>DBURL</code></td><td><code>${DB_URL}</code> (env-var substitution)</td><td><code>CustomServletContextListener</code> → <code>DBConnectionManager</code></td></tr>
+  <tr><td><code>DBUSER</code></td><td><code>sqluser</code></td><td><code>CustomServletContextListener</code> → <code>DBConnectionManager</code></td></tr>
+  <tr><td><code>TIME</code></td><td><code>8640000000</code> (≈ 100 days in ms)</td><td>Password reset token expiry window</td></tr>
+  <tr><td><code>webApiContext</code></td><td><code>/mbook-1</code></td><td><code>ServiceClient</code> routing prefix</td></tr>
+  <tr><td><code>webApiContextUrl</code></td><td><code>/rest/user/</code></td><td><code>ServiceClient</code> user endpoint path</td></tr>
+  <tr><td><code>webApi2Context</code></td><td><code>/mbooks-1</code></td><td><code>ServiceClient</code> routing prefix for booking API</td></tr>
+  <tr><td><code>webApi2ContextUrl</code></td><td><code>/rest/</code></td><td><code>ServiceClient</code> booking endpoint path</td></tr>
+</table>
+<p>Session config: cookies are <code>HttpOnly</code> and <code>Secure</code>.</p>
+</div>
+
+<h3>mbooks: hibernate.cfg.xml</h3>
+<div class="card">
+<p>Hand-managed Hibernate configuration (not Quarkus-managed):</p>
+<table>
+  <tr><th>Property</th><th>Value</th><th>Purpose</th></tr>
+  <tr><td><code>connection.url</code></td><td><code>jdbc:mysql://localhost:3306/book</code></td><td>Default JDBC URL (overridden by <code>DB_URL_BOOKS</code> env var)</td></tr>
+  <tr><td><code>dialect</code></td><td><code>MySQLDialect</code></td><td>MySQL-specific SQL generation</td></tr>
+  <tr><td><code>current_session_context_class</code></td><td><code>thread</code></td><td>Thread-bound session management</td></tr>
+  <tr><td><code>connection.autocommit</code></td><td><code>false</code></td><td>Manual transaction management in DAO methods</td></tr>
+  <tr><td><code>jdbc.batch_size</code></td><td><code>20</code></td><td>Batch size for bulk seat/ticket operations</td></tr>
+  <tr><td><code>order_inserts / order_updates</code></td><td><code>true</code></td><td>Reorder SQL for optimal batching</td></tr>
+  <tr><td><code>default_batch_fetch_size</code></td><td><code>10</code></td><td>Lazy collection batch loading (reduces N+1)</td></tr>
+  <tr><td><code>c3p0.max_size</code></td><td><code>100</code></td><td>Connection pool ceiling</td></tr>
+  <tr><td><code>cache.use_second_level_cache</code></td><td><code>true</code></td><td>Enable Infinispan L2 cache</td></tr>
+  <tr><td><code>cache.use_query_cache</code></td><td><code>true</code></td><td>Enable query result caching</td></tr>
+  <tr><td><code>cache.region.factory_class</code></td><td><code>infinispan</code></td><td>Infinispan as cache provider</td></tr>
+  <tr><td><code>cache.infinispan.cfg</code></td><td><code>infinispan-configs-local.xml</code></td><td>Infinispan configuration file</td></tr>
+  <tr><td><code>generate_statistics</code></td><td><code>true</code></td><td>Enable Hibernate cache/query statistics</td></tr>
+</table>
+<p>Mapped entities: Movie, Screen, Seats, Venues, ScreeningDates, Location, Ticket, Purchase, AddMovie (event model).</p>
+<p>L2-cached entities: Movie (movies region), Venues (venues region), Location (location region), Ticket (ticket region) — all using <code>read-write</code> strategy.</p>
+</div>
+
+<h3>mbooks: infinispan-configs-local.xml</h3>
+<div class="card">
+<p>Infinispan 15.0 local (non-clustered) cache configuration:</p>
+<table>
+  <tr><th>Cache Template</th><th>Max Idle</th><th>Max Entries</th><th>Eviction</th><th>Purpose</th></tr>
+  <tr><td><code>entity</code></td><td>5 min (300s)</td><td>10,000</td><td>REMOVE (LRU)</td><td>L2 entity cache for Movie, Venues, Location, Ticket</td></tr>
+  <tr><td><code>local-query</code></td><td>5 min (300s)</td><td>10,000</td><td>REMOVE (LRU)</td><td>Hibernate query result cache</td></tr>
+  <tr><td><code>timestamps</code></td><td>∞ (no expiry)</td><td>unbounded</td><td>NONE</td><td>Tracks per-table modification times for query-cache invalidation</td></tr>
+  <tr><td><code>pending-puts</code></td><td>1 min (60s)</td><td>—</td><td>—</td><td>Coordinates concurrent cache puts during entity loading</td></tr>
+</table>
+<p>All caches use <code>simple-cache="true"</code> (no transactions/clustering) with <code>application/x-java-object</code> encoding for zero-copy in-process storage. Statistics are enabled for monitoring.</p>
+</div>
+
+<h3>Apache Proxy Configuration</h3>
+<div class="card">
+<p>Defined in the <code>apache-config</code> ConfigMap within <code>quarkus-backend.yaml</code>:</p>
+<pre><code>ProxyPreserveHost On
+ProxyRequests Off
+
+ProxyPass /login          http://dalogin:8080/login                  retry=0
+ProxyPass /mbook-1        http://mbook:8888/mbook-1                  retry=0
+ProxyPass /mbooks-1       http://mbooks:8080/mbooks-1                retry=0
+ProxyPass /simple-service-webapp  http://simple-service-webapp:8085/simple-service-webapp  retry=0
+
+# WebSocket proxying
+ProxyPass /mbook-1/ws     ws://mbook:8888/mbook-1/ws
+ProxyPass /mbooks-1/ws    ws://mbooks:8080/mbooks-1/ws</code></pre>
+<p>The Apache pod enables <code>mod_proxy</code>, <code>mod_proxy_http</code>, and <code>mod_proxy_wstunnel</code> at startup via inline shell commands.</p>
+</div>
+
+<h3>NGINX Ingress</h3>
+<div class="card">
+<p>The ingress resource terminates TLS for <code>milo.crabdance.com</code> using the <code>cinemas-tls</code> secret and forwards all traffic to the Apache reverse proxy on port 80. Key annotations:</p>
+<table>
+  <tr><th>Annotation</th><th>Value</th><th>Purpose</th></tr>
+  <tr><td><code>proxy-read-timeout</code></td><td><code>3600</code></td><td>1-hour timeout for long-lived WebSocket connections</td></tr>
+  <tr><td><code>proxy-send-timeout</code></td><td><code>3600</code></td><td>Matching send timeout</td></tr>
+  <tr><td><code>ssl-redirect</code></td><td><code>true</code></td><td>Force HTTPS</td></tr>
+</table>
+</div>
+
+<h3>MySQL Init ConfigMap</h3>
+<div class="card">
+<p>The <code>mysql-init</code> ConfigMap contains <code>00-init.sql</code> which runs on first MySQL startup:</p>
+<pre><code>CREATE DATABASE IF NOT EXISTS login_;
+CREATE DATABASE IF NOT EXISTS book;
+CREATE USER IF NOT EXISTS 'sqluser'@'%' IDENTIFIED BY 'sqluserpw';
+GRANT ALL PRIVILEGES ON login_.* TO 'sqluser'@'%';
+GRANT ALL PRIVILEGES ON book.* TO 'sqluser'@'%';</code></pre>
+<p>MySQL is started with <code>--lower-case-table-names=1</code> because Hibernate entity names are lowercase but the original SQL dump uses mixed case.</p>
+</div>
+</section>
+
+<!-- ──────── TESTING ──────── -->
+<section id="testing">
+<h2>Testing</h2>
+
+<h3>Python Integration Tests</h3>
+<div class="card">
+<p>Two Python scripts in <code>k8infra/</code> provide end-to-end API validation using only Python stdlib (no pip dependencies):</p>
+<table>
+  <tr><th>Script</th><th>What It Tests</th><th>Steps</th></tr>
+  <tr><td><code>test-login.py</code></td><td>Full login + user retrieval + smoke test</td><td>
+    <ol>
+      <li><strong>Login</strong>: POST <code>/login/HelloWorld</code> with HMAC-SHA512 handshake (same algorithm as iOS client)</li>
+      <li><strong>User retrieval</strong>: GET <code>/login/admin?JSESSIONID=</code> with X-Token and Ciphertext headers — validates full session + XSRF chain through dalogin → mbook</li>
+      <li><strong>mbooks smoke test</strong>: GET <code>/mbooks-1/rest/book/hello</code> — verifies the booking service is responsive</li>
+    </ol>
+  </td></tr>
+  <tr><td><code>test-login-admin.py</code></td><td>Admin-level login and retrieval</td><td>Similar to test-login.py but uses an admin-level user to validate elevated access patterns.</td></tr>
+</table>
+</div>
+
+<h3>Running Tests</h3>
+<pre><code># Prerequisites: cluster running with seeded databases
+# Both scripts use self-signed cert (verify=False)
+python3 k8infra/test-login.py
+python3 k8infra/test-login-admin.py
+
+# Expected output:
+# STEP 1 — Login via POST /login/HelloWorld    → Status: 200
+# STEP 2 — GET /login/admin                     → Status: 200 (user JSON)
+# STEP 3 — GET /mbooks-1/rest/book/hello        → Status: 200
+# ✅  All API calls completed.</code></pre>
+
+<h3>Test Configuration</h3>
+<div class="card">
+<table>
+  <tr><th>Setting</th><th>Value</th><th>Notes</th></tr>
+  <tr><td>Base URL</td><td><code>https://milo.crabdance.com</code></td><td>Via NGINX ingress with self-signed cert (cert verification disabled)</td></tr>
+  <tr><td>Test user</td><td><code>GI</code></td><td>Must exist in the <code>login_</code> database (seeded by <code>login.sql</code>)</td></tr>
+  <tr><td>Password hash</td><td>Pre-computed SHA3-512</td><td>Hardcoded in test script; matches the hash stored in <code>logins.hash_</code></td></tr>
+  <tr><td>Device ID</td><td><code>test-device-001</code></td><td>Arbitrary identifier for the test "device"</td></tr>
+  <tr><td>SSL verification</td><td>Disabled</td><td><code>ssl.CERT_NONE</code> — trusts self-signed certificate</td></tr>
+</table>
+</div>
+
+<h3>Quarkus Unit Tests</h3>
+<div class="card">
+<p>Minimal smoke-level tests exist under <code>mbooks-quarkus/src/test/java/com/jeet/</code>. These use the <code>@QuarkusTest</code> annotation and RestAssured:</p>
+<ul>
+  <li><code>GreetingResourceTest</code> — verifies <code>GET /mbooks-1/rest/book/hello</code> returns 200</li>
+  <li><code>NativeGreetingResourceIT</code> — native-image variant of the same test</li>
+</ul>
+<p>Tests for other services are not yet written. See the <a href="#refactoring">Refactoring Suggestions</a> section for recommended test additions.</p>
+</div>
+
+<h3>Manual Testing Checklist</h3>
+<div class="card">
+<table>
+  <tr><th>Flow</th><th>Steps</th><th>Expected Result</th></tr>
+  <tr><td>Login (web)</td><td>Open <code>https://milo.crabdance.com/login/</code> → enter credentials → submit</td><td>Redirect to <code>/login/main.html</code></td></tr>
+  <tr><td>Login (API)</td><td>Run <code>python3 k8infra/test-login.py</code></td><td>All 3 steps pass</td></tr>
+  <tr><td>Registration</td><td>Open <code>/login/register.html</code> → enter user/email/password → submit</td><td>Account created, activation prompt (if voucher-based)</td></tr>
+  <tr><td>Browse movies</td><td>After login, navigate to movies page or call <code>GET /mbooks-1/rest/book/movies</code></td><td>JSON array of movie objects</td></tr>
+  <tr><td>Venue selection</td><td>Call <code>GET /mbooks-1/rest/book/venues/{movieId}</code></td><td>JSON array of venue objects with screening dates</td></tr>
+  <tr><td>Seat map</td><td>Call <code>GET /mbooks-1/rest/book/seats/{screenId}</code></td><td>JSON array of seat objects with reservation status</td></tr>
+  <tr><td>Checkout</td><td>POST to <code>/mbooks-1/rest/book/payment/fullcheckout2</code> with orderId, seats, nonce</td><td>Payment processed, tickets created</td></tr>
+  <tr><td>Image loading</td><td>Access <code>/simple-service-webapp/webapi/myresource/images/movies/{file}</code></td><td>Movie poster image returned</td></tr>
+  <tr><td>WebSocket</td><td>Connect to <code>wss://milo.crabdance.com/mbook-1/ws</code></td><td>Connection established, receives broadcasts on movie/user changes</td></tr>
+  <tr><td>Logout</td><td>Call <code>GET /login/logout</code></td><td>Session invalidated, cookies cleared</td></tr>
+</table>
+</div>
+</section>
+
 <!-- ──────── REFACTORING ──────── -->
 <section id="refactoring">
 <h2>Refactoring Suggestions</h2>
@@ -1573,6 +2422,48 @@ public String getHash(String pass, String user) throws SQLException {
   <tr><td><span class="badge badge-blue">GET</span></td><td>/simple-service-webapp/webapi/myresource/images/movies/{file}</td><td>Movie poster</td></tr>
   <tr><td><span class="badge badge-blue">GET</span></td><td>/simple-service-webapp/webapi/myresource/images/venues/{file}</td><td>Venue photo</td></tr>
   <tr><td><span class="badge badge-blue">GET</span></td><td>/simple-service-webapp/webapi/myresource/images/profiles/{file}</td><td>Profile picture</td></tr>
+</table>
+</section>
+
+<!-- ──────── GLOSSARY ──────── -->
+<section id="glossary">
+<h2>Glossary</h2>
+<table>
+  <tr><th>Term</th><th>Definition</th></tr>
+  <tr><td><strong>dalogin</strong></td><td>Authentication and session gateway service. Handles login, registration, session management, and proxies protected requests to downstream services. Name derived from "Da Login".</td></tr>
+  <tr><td><strong>mbook</strong></td><td>User/device/profile microservice. Serves user data, device lists, news events, and realtime notifications. Name derived from "My Book" (user book).</td></tr>
+  <tr><td><strong>mbooks</strong></td><td>Movie/booking/payment microservice. Handles the movie catalog, seat reservation, Braintree payment processing, and purchase history. Name derived from "My Books" (movie bookings).</td></tr>
+  <tr><td><strong>HMAC-SHA512</strong></td><td>Hash-based Message Authentication Code using SHA-512. Used for the login handshake — the client proves knowledge of the password hash without transmitting it in plaintext. The message includes the URL, body, timestamp, and content-length.</td></tr>
+  <tr><td><strong>XSRF-TOKEN</strong></td><td>Cross-Site Request Forgery token. An AES-encrypted combination of <code>TIME_</code> (session timestamp) and <code>token2</code> (device-specific random token). Set as a cookie by dalogin and validated on every protected request by <code>AuthFilter</code> and <code>CookieFilter</code>.</td></tr>
+  <tr><td><strong>Ciphertext</strong></td><td>Request header that must match the <code>token2</code> header. Used by mbook's <code>CiphertextFilter</code> as a secondary verification that the request was forwarded by dalogin's <code>ServiceClient</code> (which copies X-Token to both headers).</td></tr>
+  <tr><td><strong>token1</strong></td><td>UUID generated by the <code>Tokens_BEFORE_INSERT</code> trigger when a device logs in. Used to identify the session in <code>GET /rest/user/{user}/{token1}</code>.</td></tr>
+  <tr><td><strong>token2</strong></td><td>Random value generated by the <code>Tokens_BEFORE_INSERT</code> trigger. Used for XSRF-TOKEN encryption and inter-service authentication (forwarded as the <code>Ciphertext</code> and <code>token2</code> headers).</td></tr>
+  <tr><td><strong>TIME_</strong></td><td>Timestamp stored in the <code>Tokens</code> table when a device logs in. Used as input to AES encryption for XSRF-TOKEN generation. Header name preserved as-is for client compatibility.</td></tr>
+  <tr><td><strong>ServiceClient</strong></td><td>RESTEasy-based HTTP client in dalogin that proxies requests to mbook/mbooks. Registers <code>RequestFilter</code> to forward session-derived headers (X-Token, Ciphertext, cookies, uuid, token2, TIME_).</td></tr>
+  <tr><td><strong>Singleton DAO</strong></td><td>The <code>DAO</code> class in mbooks-quarkus uses a hand-rolled singleton pattern (<code>DAO.instance()</code>) with a static Hibernate <code>Session</code>. All methods are <code>synchronized</code>, serialising database operations.</td></tr>
+  <tr><td><strong>L2 Cache</strong></td><td>Hibernate's second-level cache, backed by Infinispan. Caches entity instances (Movie, Venues, Location, Ticket) across Hibernate sessions. Reduces database round-trips for frequently-read data.</td></tr>
+  <tr><td><strong>Query Cache</strong></td><td>Hibernate's query result cache. Stores the IDs returned by HQL queries. Works in conjunction with the L2 entity cache and timestamps cache for invalidation.</td></tr>
+  <tr><td><strong>Pessimistic Write Lock</strong></td><td><code>LockModeType.PESSIMISTIC_WRITE</code> → <code>SELECT ... FOR UPDATE</code>. Used during seat reservation to prevent double-selling. Holds a database-level row lock until the transaction commits or rolls back.</td></tr>
+  <tr><td><strong>Braintree</strong></td><td>Payment gateway by PayPal. The system uses Braintree Sandbox for development. <code>PaymentService</code> generates client tokens and processes transactions via the Braintree Java SDK.</td></tr>
+  <tr><td><strong>Linear Template</strong></td><td>The original HTML/CSS responsive template used for the web frontend. Provides layout variants (left-sidebar, right-sidebar, no-sidebar) and a clean design.</td></tr>
+  <tr><td><strong>login_</strong></td><td>The MySQL database schema for authentication, user, device, token, voucher, and password-reset data. The trailing underscore is intentional — a legacy database named <code>login</code> (without underscore) must <strong>not</strong> exist.</td></tr>
+  <tr><td><strong>book</strong></td><td>The MySQL database schema for movies, venues, screens, screening dates, seats, tickets, and purchases.</td></tr>
+  <tr><td><strong>Apache Reverse Proxy</strong></td><td>httpd 2.4 running inside Kubernetes that routes HTTP requests to the correct backend service based on URL prefix (<code>/login</code>, <code>/mbook-1</code>, <code>/mbooks-1</code>, <code>/simple-service-webapp</code>). Also handles WebSocket upgrade proxying.</td></tr>
+  <tr><td><strong>NGINX Ingress</strong></td><td>Kubernetes Ingress controller that terminates TLS (using the <code>cinemas-tls</code> secret) and forwards traffic to the Apache reverse proxy. External entry point for all client traffic.</td></tr>
+  <tr><td><strong>PVC</strong></td><td>Persistent Volume Claim. The <code>pictures-pvc</code> provides 500Mi of storage for movie posters, venue photos, and profile pictures served by simple-service-webapp.</td></tr>
+  <tr><td><strong>fix-sprocs.sql</strong></td><td>Post-import fix script that re-creates stored procedures with correct <code>login_.</code> table references (replacing any legacy <code>login.</code> references) and adds missing columns.</td></tr>
+  <tr><td><strong>fix-triggers.sql</strong></td><td>Post-import fix script that re-creates triggers with correct table-name casing for MySQL 8 on Linux (case-sensitive filesystem).</td></tr>
+</table>
+</section>
+
+<!-- ──────── VERSION HISTORY ──────── -->
+<section id="version-history" style="margin-bottom: 40px;">
+<h2>Document Version History</h2>
+<table>
+  <tr><th>Date</th><th>Version</th><th>Changes</th></tr>
+  <tr><td>March 16, 2026</td><td>1.2</td><td>Added: Registration &amp; Voucher Flow diagram, Password Reset Flow diagram, Web Frontend (AngularJS) documentation, Environment Variables reference, Configuration Files reference, Testing section, Glossary. Expanded iOS and booking documentation.</td></tr>
+  <tr><td>March 16, 2026</td><td>1.1</td><td>Added: Booking · Hibernate &amp; Caching deep-dive, iOS client documentation (architecture, screens, backend contract, networking stack, crypto constants, Braintree, WebSocket).</td></tr>
+  <tr><td>March 15, 2026</td><td>1.0</td><td>Initial release: High-level architecture, request flow, auth flow, booking flow, all four backend services, database schemas (login_ + book), stored procedures, triggers, Kubernetes topology, deploy runbook, refactoring suggestions, API reference.</td></tr>
 </table>
 </section>
 
