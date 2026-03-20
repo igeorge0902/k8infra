@@ -243,7 +243,7 @@ spec:
             - name: QUARKUS_OTEL_ENABLED
               value: "true"
             - name: QUARKUS_OTEL_EXPORTER_OTLP_ENDPOINT
-              value: http://jaeger:4318
+              value: http://tempo:4318
             - name: QUARKUS_OTEL_EXPORTER_OTLP_PROTOCOL
               value: http/protobuf
 ---
@@ -297,7 +297,7 @@ spec:
             - name: QUARKUS_OTEL_ENABLED
               value: "true"
             - name: QUARKUS_OTEL_EXPORTER_OTLP_ENDPOINT
-              value: http://jaeger:4317
+              value: http://tempo:4317
 ---
 apiVersion: v1
 kind: Service
@@ -349,14 +349,7 @@ spec:
             - name: QUARKUS_OTEL_ENABLED
               value: "true"
             - name: QUARKUS_OTEL_EXPORTER_OTLP_ENDPOINT
-              value: http://jaeger:4317
-          readinessProbe:
-            httpGet:
-              path: /mbooks-1/rest/book/hello
-              port: 8080
-            initialDelaySeconds: 60
-            periodSeconds: 10
-            timeoutSeconds: 5
+              value: http://tempo:4317
 ---
 apiVersion: v1
 kind: Service
@@ -398,7 +391,7 @@ spec:
             - name: QUARKUS_OTEL_ENABLED
               value: "true"
             - name: QUARKUS_OTEL_EXPORTER_OTLP_ENDPOINT
-              value: http://jaeger:4318
+              value: http://tempo:4318
             - name: QUARKUS_OTEL_EXPORTER_OTLP_PROTOCOL
               value: http/protobuf
           volumeMounts:
@@ -473,63 +466,181 @@ spec:
   selector:
     app: apache
 ---
-# ===================== jaeger (tracing UI + OTLP collector) =====================
+# ===================== tempo (trace backend) =====================
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: tempo-config
+  namespace: cinemas
+data:
+  tempo.yaml: |
+    server:
+      http_listen_port: 3200
+    distributor:
+      receivers:
+        otlp:
+          protocols:
+            grpc:
+              endpoint: "0.0.0.0:4317"
+            http:
+              endpoint: "0.0.0.0:4318"
+    storage:
+      trace:
+        backend: local
+        local:
+          path: /var/tempo/traces
+        wal:
+          path: /var/tempo/wal
+    metrics_generator:
+      storage:
+        path: /var/tempo/metrics
+---
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: jaeger
+  name: tempo
   namespace: cinemas
 spec:
   replicas: 1
   selector:
     matchLabels:
-      app: jaeger
+      app: tempo
   template:
     metadata:
       labels:
-        app: jaeger
+        app: tempo
     spec:
       containers:
-        - name: jaeger
-          image: jaegertracing/all-in-one:latest
+        - name: tempo
+          image: grafana/tempo:2.7.2
           imagePullPolicy: IfNotPresent
+          args: ["-config.file=/etc/tempo/tempo.yaml"]
           ports:
+            - containerPort: 3200
+              name: http
             - containerPort: 4317
               name: otlp-grpc
             - containerPort: 4318
               name: otlp-http
-            - containerPort: 16686
-              name: ui
-          env:
-            - name: COLLECTOR_OTLP_ENABLED
-              value: "true"
-            - name: QUERY_BASE_PATH
-              value: /jaeger
+          volumeMounts:
+            - name: tempo-config
+              mountPath: /etc/tempo
+            - name: tempo-data
+              mountPath: /var/tempo
           readinessProbe:
             httpGet:
-              path: /
-              port: 16686
+              path: /ready
+              port: 3200
             initialDelaySeconds: 10
             periodSeconds: 5
+      volumes:
+        - name: tempo-config
+          configMap:
+            name: tempo-config
+        - name: tempo-data
+          emptyDir: {}
 ---
 apiVersion: v1
 kind: Service
 metadata:
-  name: jaeger
+  name: tempo
   namespace: cinemas
 spec:
   selector:
-    app: jaeger
+    app: tempo
   ports:
+    - name: http
+      port: 3200
+      targetPort: 3200
     - name: otlp-grpc
       port: 4317
       targetPort: 4317
     - name: otlp-http
       port: 4318
       targetPort: 4318
-    - name: ui
-      port: 16686
-      targetPort: 16686
+---
+# ===================== grafana (observability UI) =====================
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: grafana-datasources
+  namespace: cinemas
+data:
+  datasources.yaml: |
+    apiVersion: 1
+    datasources:
+      - name: Tempo
+        type: tempo
+        access: proxy
+        url: http://tempo:3200
+        isDefault: true
+        jsonData:
+          tracesToLogsV2:
+            datasourceUid: ''
+          nodeGraph:
+            enabled: true
+          serviceMap:
+            datasourceUid: ''
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: grafana
+  namespace: cinemas
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: grafana
+  template:
+    metadata:
+      labels:
+        app: grafana
+    spec:
+      containers:
+        - name: grafana
+          image: grafana/grafana:11.6.0
+          imagePullPolicy: IfNotPresent
+          ports:
+            - containerPort: 3000
+          env:
+            - name: GF_SERVER_ROOT_URL
+              value: https://milo.crabdance.com/grafana/
+            - name: GF_SERVER_SERVE_FROM_SUB_PATH
+              value: "true"
+            - name: GF_AUTH_ANONYMOUS_ENABLED
+              value: "true"
+            - name: GF_AUTH_ANONYMOUS_ORG_ROLE
+              value: Admin
+            - name: GF_SECURITY_ADMIN_USER
+              value: admin
+            - name: GF_SECURITY_ADMIN_PASSWORD
+              value: admin
+          volumeMounts:
+            - name: grafana-datasources
+              mountPath: /etc/grafana/provisioning/datasources
+          readinessProbe:
+            httpGet:
+              path: /grafana/api/health
+              port: 3000
+            initialDelaySeconds: 10
+            periodSeconds: 5
+      volumes:
+        - name: grafana-datasources
+          configMap:
+            name: grafana-datasources
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: grafana
+  namespace: cinemas
+spec:
+  selector:
+    app: grafana
+  ports:
+    - port: 3000
+      targetPort: 3000
 ---
 # ===================== ingress =====================
 apiVersion: networking.k8s.io/v1
@@ -559,11 +670,11 @@ spec:
                 port:
                   number: 80
 ---
-# ===================== jaeger UI ingress =====================
+# ===================== grafana UI ingress =====================
 apiVersion: networking.k8s.io/v1
 kind: Ingress
 metadata:
-  name: jaeger-ingress
+  name: grafana-ingress
   namespace: cinemas
   annotations:
     nginx.ingress.kubernetes.io/ssl-redirect: "true"
@@ -577,10 +688,10 @@ spec:
     - host: milo.crabdance.com
       http:
         paths:
-          - path: /jaeger
+          - path: /grafana
             pathType: Prefix
             backend:
               service:
-                name: jaeger
+                name: grafana
                 port:
-                  number: 16686
+                  number: 3000
