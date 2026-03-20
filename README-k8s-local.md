@@ -77,16 +77,9 @@ kubectl -n cinemas exec -i deploy/mysql -- mysql -uroot -prootpw < mysql_8/login
 kubectl -n cinemas exec -i deploy/mysql -- mysql -uroot -prootpw < mysql_8/book.sql
 ```
 
-> `login.sql` already uses `CREATE DATABASE IF NOT EXISTS login_` and `USE login_`.
-> No `sed` or database name rewriting is needed.
-
-Apply the stored-procedure and trigger fixes (rewrites `login.` → `login_.` references
-and corrects table-name casing for MySQL 8 on Linux):
-
-```bash
-kubectl -n cinemas exec -i deploy/mysql -- mysql -uroot -prootpw < k8infra/fix-sprocs.sql
-kubectl -n cinemas exec -i deploy/mysql -- mysql -uroot -prootpw < k8infra/fix-triggers.sql
-```
+> Both SQL scripts are **self-contained** — they include correct table-name casing
+> for triggers, `login_.` references in all stored procedures, and the `profilePicture`
+> column on `logins`. No further fix scripts need to be applied.
 
 > **Important:** Do **not** create a database named `login` (without underscore).
 > Only `login_` should exist. If a stale `login` database is present, drop it:
@@ -167,6 +160,9 @@ echo "rdr pass on lo0 inet proto tcp from any to 127.0.0.1 port 443 -> 127.0.0.1
   | sudo pfctl -ef -
 ```
 
+> **Note:** This replaces the active pf ruleset. If you use Cisco AnyConnect VPN,
+> reconnect it after running this command. Rules reset on reboot.
+
 ### Verify
 
 ```bash
@@ -176,7 +172,27 @@ curl -sk https://milo.crabdance.com/simple-service-webapp/webapi/myresource
 # → Got it
 ```
 
-The iOS app (`serverURL = "https://milo.crabdance.com"`) and the `CustomURLSessionDelegate`
+Verify WebSocket upgrade (must use `--http1.1` — HTTP/2 strips `Connection: Upgrade`):
+
+```bash
+curl -sk --http1.1 -o /dev/null -w "%{http_code}\n" \
+  -H 'Upgrade: websocket' -H 'Connection: Upgrade' \
+  -H 'Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==' \
+  -H 'Sec-WebSocket-Version: 13' \
+  https://milo.crabdance.com/mbook-1/ws
+# → 101
+```
+
+> **⚠️ The port-forward and pf redirect do not survive a reboot.**
+> If the iOS app shows `NSPOSIXErrorDomain Code=57 "Socket is not connected"` or
+> `NSURLErrorDomain: -1003`, the pf redirect is missing. Re-run:
+> ```bash
+> kubectl port-forward -n ingress-nginx svc/ingress-nginx-controller 8443:443 &
+> echo "rdr pass on lo0 inet proto tcp from any to 127.0.0.1 port 443 -> 127.0.0.1 port 8443" \
+>   | sudo pfctl -ef -
+> ```
+
+The iOS app (via `URLManager.baseURL = "https://milo.crabdance.com"`) and the `CustomURLSessionDelegate`
 already trust self-signed certs for `milo.crabdance.com`.
 
 ## 6) Quick checks
@@ -216,9 +232,11 @@ kubectl -n cinemas rollout restart deployment/dalogin
 ## Notes specific to this codebase
 
 - All external backend traffic goes through an in-cluster Apache reverse proxy service (`apache`) that fronts `/login`, `/mbook-1`, `/mbooks-1`, and `/simple-service-webapp`.
+- **Apache proxy rule ordering matters.** In `proxy.conf`, WebSocket routes (`/mbook-1/ws`, `/mbooks-1/ws`) must appear **before** their parent HTTP routes (`/mbook-1`, `/mbooks-1`). Apache `mod_proxy` is first-match — if the HTTP route comes first it swallows WebSocket upgrade requests and the iOS client gets `Socket is not connected`.
 - `dalogin` expects one backend base URL (`WILDFLY_URL`) for both `/mbook-1` and `/mbooks-1`; it is pointed to the Apache service (`http://apache`, port 80).
 - MySQL runs with `--lower-case-table-names=1` so that Hibernate entity names (lowercase) match the dump's mixed-case table names.
 - Kafka topics: producers publish to `ios-movies-notifications2` (movies) and `ios-users-notifications` (users); consumers subscribe to matching topics. Both producers and consumers read `BOOTSTRAP_URL` from the environment.
-- iOS `serverURL` is `https://milo.crabdance.com`; the self-signed cert is trusted via `CustomURLSessionDelegate`.
-- To tear down the pf redirect: `sudo pfctl -F all -f /etc/pf.conf`
+- iOS URLs are centralised in `URLManager.swift` (`baseHost = "milo.crabdance.com"`); the self-signed cert is trusted via `CustomURLSessionDelegate`. To point at a different host, change only `URLManager.baseHost`.
+- The port-forward (`8443:443`) and pf redirect (`443 → 8443`) **do not survive a reboot**. If the iOS app logs `NSURLErrorDomain: -1003` or `Code=57 "Socket is not connected"`, re-run both commands from step 5.
+- To tear down the pf redirect: `sudo pfctl -F all` (or just reboot)
 - To remove the hosts entry: `sudo sed -i '' '/milo.crabdance.com/d' /etc/hosts`

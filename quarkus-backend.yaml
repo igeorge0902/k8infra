@@ -185,6 +185,14 @@ data:
     ProxyPreserveHost On
     ProxyRequests Off
 
+    # WebSocket routes MUST appear before their parent HTTP routes
+    # (Apache mod_proxy is first-match; /mbook-1 would swallow /mbook-1/ws)
+    ProxyPass /mbook-1/ws ws://mbook:8888/mbook-1/ws
+    ProxyPassReverse /mbook-1/ws ws://mbook:8888/mbook-1/ws
+
+    ProxyPass /mbooks-1/ws ws://mbooks:8080/mbooks-1/ws
+    ProxyPassReverse /mbooks-1/ws ws://mbooks:8080/mbooks-1/ws
+
     ProxyPass /login http://dalogin:8080/login retry=0
     ProxyPassReverse /login http://dalogin:8080/login
 
@@ -193,12 +201,6 @@ data:
 
     ProxyPass /mbooks-1 http://mbooks:8080/mbooks-1 retry=0
     ProxyPassReverse /mbooks-1 http://mbooks:8080/mbooks-1
-
-    ProxyPass /mbook-1/ws ws://mbook:8888/mbook-1/ws
-    ProxyPassReverse /mbook-1/ws ws://mbook:8888/mbook-1/ws
-
-    ProxyPass /mbooks-1/ws ws://mbooks:8080/mbooks-1/ws
-    ProxyPassReverse /mbooks-1/ws ws://mbooks:8080/mbooks-1/ws
 
     ProxyPass /simple-service-webapp http://simple-service-webapp:8085/simple-service-webapp retry=0
     ProxyPassReverse /simple-service-webapp http://simple-service-webapp:8085/simple-service-webapp
@@ -338,6 +340,13 @@ spec:
               value: kafka:9092
             - name: QUARKUS_OTEL_ENABLED
               value: "false"
+          readinessProbe:
+            httpGet:
+              path: /mbooks-1/rest/book/hello
+              port: 8080
+            initialDelaySeconds: 60
+            periodSeconds: 10
+            timeoutSeconds: 5
 ---
 apiVersion: v1
 kind: Service

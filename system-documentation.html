@@ -1985,6 +1985,7 @@
 │   ├── MapViewController.swift    ← venue locations on map
 │   │
 │   ├── GeneralRequestManager.swift ← HTTP client (GET/POST, caching, JSON)
+│   ├── URLManager.swift            ← centralised URL configuration (baseHost, service paths, WebSocket)
 │   ├── RequestManager.swift        ← simpler GET wrapper
 │   ├── CustomURLSession.swift      ← shared singleton URLSession
 │   ├── CustomURLSessionDelegate.swift ← self-signed cert trust
@@ -1997,7 +1998,7 @@
 │   ├── aes.js / pbkdf2.js / ...  ← CryptoJS library (JS files)
 │   │
 │   ├── BroadCasting/
-│   │   └── Websocket.swift        ← WebSocket client (wss://milo.crabdance.com/mbook-1/ws)
+│   │   └── Websocket.swift        ← WebSocket client (via URLManager.webSocketURL, 30s keepalive ping)
 │   │
 │   ├── *Data.swift                ← data models (MoviesData, SeatsData, etc.)
 │   ├── *Cells.swift               ← custom UITableView/UICollectionView cells
@@ -2279,9 +2280,9 @@
 
 <h3>Base URL &amp; TLS</h3>
 <div class="card">
-<p><strong>Server URL</strong>: <code>let serverURL = "https://milo.crabdance.com"</code> (hardcoded in <code>GeneralRequestManager.swift</code>)</p>
-<p><strong>Self-signed cert trust</strong>: <code>CustomURLSessionDelegate</code> allows self-signed certs for hosts: <code>milo.crabdance.com</code>, <code>localhost</code>, <code>igeorge1982.local</code>.</p>
-<p><strong>WebSocket URL</strong>: <code>wss://milo.crabdance.com/mbook-1/ws</code> (hardcoded in <code>BroadCasting/Websocket.swift</code>)</p>
+<p><strong>Server URL</strong>: Centralised in <code>URLManager.swift</code> — <code>baseHost = "milo.crabdance.com"</code>, <code>baseURL = "https://milo.crabdance.com"</code>. All service paths are built via <code>URLManager.login()</code>, <code>URLManager.mbooks()</code>, and <code>URLManager.image()</code>. The former global <code>serverURL</code> in <code>GeneralRequestManager.swift</code> has been removed.</p>
+<p><strong>Self-signed cert trust</strong>: <code>CustomURLSessionDelegate</code> allows self-signed certs for hosts derived from <code>URLManager.baseHost</code>, plus <code>localhost</code> and <code>igeorge1982.local</code>.</p>
+<p><strong>WebSocket URL</strong>: <code>URLManager.webSocketURL</code> → <code>wss://milo.crabdance.com/mbook-1/ws</code></p>
 </div>
 
 <h3>Full iOS → Backend Request Map</h3>
@@ -2330,7 +2331,7 @@
 <h3>Image Loading</h3>
 <div class="card">
 <p>Movie posters are loaded via <code>GeneralRequestManager</code> with <code>isCacheable: "1"</code>. The URL is constructed as:</p>
-<pre><code>serverURL + "/simple-service-webapp/webapi" + movie.large_picture
+<pre><code>URLManager.image(movie.large_picture)
 // e.g. "https://milo.crabdance.com/simple-service-webapp/webapi/myresource/images/movies/the-godfather.jpg"</code></pre>
 <p>The <code>large_picture</code> field from the movie JSON contains the path like <code>/myresource/images/movies/the-godfather.jpg</code>. Cached in Realm for 1 hour.</p>
 </div>
@@ -2349,12 +2350,15 @@
 
 <h3>WebSocket (Realtime)</h3>
 <div class="card">
-<p><code>WebSocketManager</code> connects to <code>wss://milo.crabdance.com/mbook-1/ws</code> using native <code>URLSessionWebSocketTask</code>. Features:</p>
+<p><code>WebSocketManager</code> connects to <code>URLManager.webSocketURL</code> (<code>wss://milo.crabdance.com/mbook-1/ws</code>) using native <code>URLSessionWebSocketTask</code>. Features:</p>
 <ul>
-  <li>Auto-reconnect on close/error (3-second backoff)</li>
+  <li>Sends a <strong>ping every 30 seconds</strong> to keep the connection alive through NGINX/Apache proxies</li>
+  <li>Auto-reconnect on close/error (3-second backoff); <code>disconnect()</code> for clean shutdown</li>
   <li>Receives text messages (JSON) broadcast by the backend's <code>KafkaListener → WebSocketServer</code></li>
   <li>Uses the same shared <code>URLSession</code> (inherits self-signed cert trust)</li>
+  <li>Uses <code>[weak self]</code> in callbacks to prevent retain cycles</li>
 </ul>
+<p>On the server side, <code>WebSocketServer</code> in both mbook and mbooks sets <code>session.setMaxIdleTimeout(0)</code> to disable idle timeout, handles <code>@OnMessage</code> pong frames for keepalive, and includes <code>@OnError</code> handling that removes dead sessions from the broadcast set.</p>
 </div>
 </section>
 
@@ -2681,11 +2685,9 @@ done
 kubectl apply -f k8infra/quarkus-backend.yaml
 kubectl -n cinemas get pods  # wait for Running
 
-# 4. Seed databases (IMPORTANT: apply fix scripts after import!)
+# 4. Seed databases (both SQL scripts are self-contained — no fix scripts needed)
 kubectl -n cinemas exec -i deploy/mysql -- mysql -uroot -prootpw &lt; mysql_8/login.sql
 kubectl -n cinemas exec -i deploy/mysql -- mysql -uroot -prootpw &lt; mysql_8/book.sql
-kubectl -n cinemas exec -i deploy/mysql -- mysql -uroot -prootpw &lt; k8infra/fix-sprocs.sql
-kubectl -n cinemas exec -i deploy/mysql -- mysql -uroot -prootpw &lt; k8infra/fix-triggers.sql
 
 # 5. ⚠️  Ensure NO 'login' database exists (only login_)
 kubectl -n cinemas exec deploy/mysql -- mysql -uroot -prootpw -e "DROP DATABASE IF EXISTS login;"
@@ -2761,11 +2763,11 @@ python3 k8infra/test-login-admin.py</code></pre>
 
 <h3>dalogin: web.xml</h3>
 <div class="card">
-<p>Located at <code>src/main/resources/META-INF/resources/WEB-INF/web.xml</code>. Defines context parameters consumed by servlets:</p>
+<p>Located at <code>src/main/resources/META-INF/web.xml</code> (the Quarkus Undertow deployment descriptor path). A legacy copy also exists at <code>src/main/resources/META-INF/resources/WEB-INF/web.xml</code> but that location is only served as static content — Quarkus Undertow does not read context-params from it. Defines context parameters consumed by servlets:</p>
 <table>
   <tr><th>Parameter</th><th>Value</th><th>Used By</th></tr>
   <tr><td><code>DBPWD</code></td><td><code>sqluserpw</code></td><td><code>CustomServletContextListener</code> → <code>DBConnectionManager</code></td></tr>
-  <tr><td><code>DBURL</code></td><td><code>${DB_URL}</code> (env-var substitution)</td><td><code>CustomServletContextListener</code> → <code>DBConnectionManager</code></td></tr>
+  <tr><td><code>DBURL</code></td><td><code>jdbc:mysql://localhost:3306/login_</code></td><td><code>CustomServletContextListener</code> → <code>DBConnectionManager</code> (runtime DB URL is overridden via <code>SystemConstants.extractCatalog()</code> reading the <code>DB_URL</code> env var)</td></tr>
   <tr><td><code>DBUSER</code></td><td><code>sqluser</code></td><td><code>CustomServletContextListener</code> → <code>DBConnectionManager</code></td></tr>
   <tr><td><code>TIME</code></td><td><code>8640000000</code> (≈ 100 days in ms)</td><td>Password reset token expiry window</td></tr>
   <tr><td><code>webApiContext</code></td><td><code>/mbook-1</code></td><td><code>ServiceClient</code> routing prefix</td></tr>
@@ -2932,6 +2934,7 @@ python3 k8infra/test-login-admin.py
 <h4>🔴 HIGH — Thread-Safety: Remove Static Mutable State</h4>
 <p><strong>Where:</strong> <code>HelloWorld.java</code>, <code>SQLAccess.java</code>, <code>mbooks DAO.java</code>, all filters</p>
 <p><strong>Problem:</strong> Servlet fields like <code>pass</code>, <code>user</code>, <code>session</code>, <code>token2</code> are declared <code>volatile static</code>. Under concurrent requests, these get overwritten by other threads between reads. The <code>synchronized</code> on <code>doPost()</code> serializes all requests through a single servlet instance, destroying throughput.</p>
+<p><strong>Progress:</strong> <code>SessionAttributeListener</code> has been fixed — <code>volatile static</code> fields (<code>id</code>, <code>name</code>, <code>value</code>) are now local variables, logger switched from <code>log4j</code> to <code>org.jboss.logging</code>, <code>StringBuffer</code> replaced with <code>StringBuilder</code>. Remaining servlets and filters still need the same treatment.</p>
 <p><strong>Fix:</strong> Move all per-request state to local variables inside the method. The servlet should be stateless. Remove <code>synchronized</code> from request methods. Same applies to <code>SQLAccess</code> — the static fields (<code>hash</code>, <code>token</code>, <code>uuid</code>, <code>rs</code>, etc.) should be local to each method call.</p>
 <pre><code>// BEFORE (broken under concurrency)
 private volatile static String user;
@@ -3004,7 +3007,7 @@ public String getHash(String pass, String user) throws SQLException {
 <div class="card priority-low">
 <h4>🟢 LOW — Persistent Pictures Volume</h4>
 <p><strong>Where:</strong> <code>quarkus-backend.yaml</code></p>
-<p><strong>Problem:</strong> Pictures volume is <code>emptyDir</code> — lost on every pod restart. Requires manual <code>kubectl cp</code> after each deployment.</p>
+<p><strong>Problem:</strong> A <code>pictures-pvc</code> PersistentVolumeClaim (500 Mi) is defined in the manifest but not yet referenced by the <code>simple-service-webapp</code> deployment — it still uses <code>emptyDir</code>, which is lost on every pod restart. Requires manual <code>kubectl cp</code> after each deployment.</p>
 <p><strong>Fix:</strong> Use a PersistentVolumeClaim, or build the pictures into the Docker image, or use a Minikube hostPath mount. A ConfigMap-based init container could also sync from a git-hosted pictures repo.</p>
 </div>
 
@@ -3106,8 +3109,6 @@ public String getHash(String pass, String user) throws SQLException {
   <tr><td><strong>Apache Reverse Proxy</strong></td><td>httpd 2.4 running inside Kubernetes that routes HTTP requests to the correct backend service based on URL prefix (<code>/login</code>, <code>/mbook-1</code>, <code>/mbooks-1</code>, <code>/simple-service-webapp</code>). Also handles WebSocket upgrade proxying.</td></tr>
   <tr><td><strong>NGINX Ingress</strong></td><td>Kubernetes Ingress controller that terminates TLS (using the <code>cinemas-tls</code> secret) and forwards traffic to the Apache reverse proxy. External entry point for all client traffic.</td></tr>
   <tr><td><strong>PVC</strong></td><td>Persistent Volume Claim. The <code>pictures-pvc</code> provides 500Mi of storage for movie posters, venue photos, and profile pictures served by simple-service-webapp.</td></tr>
-  <tr><td><strong>fix-sprocs.sql</strong></td><td>Post-import fix script that re-creates stored procedures with correct <code>login_.</code> table references (replacing any legacy <code>login.</code> references) and adds missing columns.</td></tr>
-  <tr><td><strong>fix-triggers.sql</strong></td><td>Post-import fix script that re-creates triggers with correct table-name casing for MySQL 8 on Linux (case-sensitive filesystem).</td></tr>
 </table>
 </section>
 
@@ -3116,6 +3117,7 @@ public String getHash(String pass, String user) throws SQLException {
 <h2>Document Version History</h2>
 <table>
   <tr><th>Date</th><th>Version</th><th>Changes</th></tr>
+  <tr><td>March 20, 2026</td><td>1.4</td><td>Updated: iOS URL centralisation (<code>URLManager.swift</code> replaces hardcoded <code>serverURL</code>), WebSocket keepalive pings (30s client ping + server idle timeout disabled + <code>@OnError</code>/<code>@OnMessage</code> pong handling), VenuesVC storyboard fix (removed non-existent <code>Venue</code> custom class, restored navigation to VenuesDetailsVC), SessionAttributeListener refactored (removed static mutable state, switched to <code>org.jboss.logging</code>), mbooks deployment liveness/readiness probes, Apache WebSocket proxy rule ordering fix, removed obsolete <code>fix-sprocs.sql</code>/<code>fix-triggers.sql</code> (SQL scripts now self-contained).</td></tr>
   <tr><td>March 16, 2026</td><td>1.3</td><td>Added: Hibernate Entity Relationships diagram (lazy vs eager fetch types with annotations), Movie Booking Entity Walk (step-by-step cache/DB interaction per user action), Admin Venue Insertion cascade diagram with gotchas table, mbook entities (login_ schema), Service Interaction Map with inter-service headers. Updated AGENTS.md with refactoring roadmap, entity relationship guide, and L2 cache summary.</td></tr>
   <tr><td>March 16, 2026</td><td>1.2</td><td>Added: Registration &amp; Voucher Flow diagram, Password Reset Flow diagram, Web Frontend (AngularJS) documentation, Environment Variables reference, Configuration Files reference, Testing section, Glossary. Expanded iOS and booking documentation.</td></tr>
   <tr><td>March 16, 2026</td><td>1.1</td><td>Added: Booking · Hibernate &amp; Caching deep-dive, iOS client documentation (architecture, screens, backend contract, networking stack, crypto constants, Braintree, WebSocket).</td></tr>
