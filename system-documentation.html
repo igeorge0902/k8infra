@@ -129,6 +129,7 @@
     <li><a href="#db-triggers">Triggers</a></li>
     <li class="section-title">Infrastructure</li>
     <li><a href="#k8s">Kubernetes Topology</a></li>
+    <li><a href="#observability">Observability (OpenTelemetry)</a></li>
     <li><a href="#deploy">Deploy Runbook</a></li>
     <li class="section-title">Analysis</li>
     <li><a href="#env-vars">Environment Variables</a></li>
@@ -2654,14 +2655,117 @@
   <text x="335" y="175" text-anchor="middle" fill="#7b1fa2" font-weight="bold">ZooKeeper</text>
   <text x="335" y="195" text-anchor="middle" fill="#555" font-size="10">:2181</text>
 
+  <rect x="410" y="150" width="110" height="60" rx="6" fill="#e3f2fd" stroke="#1565c0" stroke-width="2"/>
+  <text x="465" y="175" text-anchor="middle" fill="#1565c0" font-weight="bold">Jaeger</text>
+  <text x="465" y="195" text-anchor="middle" fill="#555" font-size="10">:4317/:4318/:16686</text>
+
   <!-- Services table -->
   <text x="20" y="250" fill="#333" font-weight="bold" font-size="13">Services (ClusterIP)</text>
   <rect x="20" y="260" width="760" height="80" rx="6" fill="#fff" stroke="#ddd"/>
-  <text x="30" y="280" fill="#555" font-size="10">mysql:3306 │ kafka:9092 │ zookeeper:2181 │ dalogin:8080 │ mbook:8888 │ mbooks:8080 │ simple-service-webapp:8085 │ apache:80</text>
+  <text x="30" y="280" fill="#555" font-size="10">mysql:3306 │ kafka:9092 │ zookeeper:2181 │ jaeger:4317/4318/16686 │ dalogin:8080 │ mbook:8888 │ mbooks:8080 │ simple-service-webapp:8085 │ apache:80</text>
   <text x="30" y="300" fill="#555" font-size="10" font-weight="bold">Ingress:</text>
-  <text x="30" y="315" fill="#555" font-size="10">milo.crabdance.com → apache:80 (TLS termination via cinemas-tls secret, nginx.ingress class)</text>
+  <text x="30" y="315" fill="#555" font-size="10">milo.crabdance.com → apache:80 (TLS termination) │ milo.crabdance.com/jaeger → jaeger:16686 (Jaeger UI)</text>
   <text x="30" y="330" fill="#555" font-size="10">MySQL args: --lower-case-table-names=1 │ emptyDir for mysql-data │ ConfigMap: 00-init.sql creates login_ + book + sqluser grants</text>
 </svg>
+</div>
+</section>
+
+<!-- ──────── OBSERVABILITY ──────── -->
+<section id="observability">
+<h2>Observability (OpenTelemetry + Jaeger)</h2>
+<p>All four backend services export distributed traces via <strong>OpenTelemetry</strong> to a <strong>Jaeger all-in-one</strong> instance running in the cluster. Jaeger provides a web UI for searching, visualising, and comparing traces across services.</p>
+
+<h3>Architecture</h3>
+<div class="card">
+<pre><code>┌────────────┐  ┌───────────┐  ┌────────────┐  ┌─────────────────────┐
+│  dalogin   │  │  mbook    │  │  mbooks    │  │ simple-service-webapp│
+│ (http/pb)  │  │ (gRPC)    │  │ (gRPC)     │  │ (http/pb)           │
+└─────┬──────┘  └─────┬─────┘  └──────┬─────┘  └──────────┬──────────┘
+      │OTLP:4318      │OTLP:4317      │OTLP:4317          │OTLP:4318
+      └────────────────┴───────────────┴───────────────────┘
+                               │
+                    ┌──────────▼──────────┐
+                    │   Jaeger all-in-one │
+                    │  :4317 (gRPC)       │
+                    │  :4318 (HTTP)       │
+                    │  :16686 (UI)        │
+                    └─────────────────────┘
+                               │
+                    ┌──────────▼──────────┐
+                    │  NGINX Ingress      │
+                    │  /jaeger → :16686   │
+                    └─────────────────────┘</code></pre>
+</div>
+
+<h3>OTLP Protocol per Service</h3>
+<table>
+  <tr><th>Service</th><th>Protocol</th><th>Port</th><th>Reason</th></tr>
+  <tr><td>dalogin-quarkus</td><td><code>http/protobuf</code></td><td>4318</td><td>No OkHttp dependency needed — uses Vert.x HTTP client</td></tr>
+  <tr><td>mbook-quarkus</td><td><code>grpc</code></td><td>4317</td><td>Already has OkHttp dependency (used elsewhere)</td></tr>
+  <tr><td>mbooks-quarkus</td><td><code>grpc</code></td><td>4317</td><td>Already has OkHttp dependency (used elsewhere)</td></tr>
+  <tr><td>simple-service-webapp-quarkus</td><td><code>http/protobuf</code></td><td>4318</td><td>No OkHttp dependency needed — uses Vert.x HTTP client</td></tr>
+</table>
+<p><strong>Note:</strong> Quarkus 3.19.4's <code>quarkus-opentelemetry</code> gRPC exporter requires the <code>okhttp</code> library at runtime (<code>okhttp3.Interceptor</code>). Services without an existing OkHttp dependency use the <code>http/protobuf</code> protocol instead, which uses the built-in Vert.x HTTP client.</p>
+
+<h3>application.properties (per service)</h3>
+<div class="card">
+<pre><code># --- OpenTelemetry ---
+quarkus.otel.enabled=true
+quarkus.otel.traces.enabled=true
+quarkus.otel.exporter.otlp.endpoint=http://localhost:4317   # or 4318 for http/protobuf
+quarkus.otel.exporter.otlp.protocol=grpc                    # or http/protobuf
+quarkus.otel.traces.exporter=otlp
+quarkus.otel.service.name=&lt;service-name&gt;-quarkus
+quarkus.otel.traces.sampler=parentbased_always_on</code></pre>
+<p>In Kubernetes, the endpoint is overridden via <code>QUARKUS_OTEL_EXPORTER_OTLP_ENDPOINT</code> env var to point to the Jaeger service (<code>http://jaeger:4317</code> or <code>http://jaeger:4318</code>).</p>
+</div>
+
+<h3>Maven Dependencies</h3>
+<div class="card">
+<p>All four services include in their <code>pom.xml</code>:</p>
+<pre><code>&lt;dependency&gt;
+    &lt;groupId&gt;io.quarkus&lt;/groupId&gt;
+    &lt;artifactId&gt;quarkus-opentelemetry&lt;/artifactId&gt;
+&lt;/dependency&gt;</code></pre>
+<p>Services using gRPC protocol (<code>mbook</code>, <code>mbooks</code>) also require:</p>
+<pre><code>&lt;dependency&gt;
+    &lt;groupId&gt;com.squareup.okhttp3&lt;/groupId&gt;
+    &lt;artifactId&gt;okhttp&lt;/artifactId&gt;
+    &lt;version&gt;4.12.0&lt;/version&gt;
+&lt;/dependency&gt;</code></pre>
+<p>Services using <code>http/protobuf</code> (<code>dalogin</code>, <code>simple-service-webapp</code>) also include OkHttp because the gRPC exporter classes are still on the classpath at runtime even when the HTTP protocol is selected.</p>
+</div>
+
+<h3>Jaeger Deployment</h3>
+<div class="card">
+<p><code>jaegertracing/all-in-one:latest</code> — single-pod deployment with in-memory storage (traces are lost on pod restart). Suitable for development and debugging.</p>
+<table>
+  <tr><th>Port</th><th>Protocol</th><th>Purpose</th></tr>
+  <tr><td>4317</td><td>OTLP/gRPC</td><td>Trace ingestion (mbook, mbooks)</td></tr>
+  <tr><td>4318</td><td>OTLP/HTTP</td><td>Trace ingestion (dalogin, simple-service-webapp)</td></tr>
+  <tr><td>16686</td><td>HTTP</td><td>Jaeger Query UI</td></tr>
+</table>
+<p>Environment variables:</p>
+<ul>
+  <li><code>COLLECTOR_OTLP_ENABLED=true</code> — enables the OTLP collector endpoints</li>
+  <li><code>QUERY_BASE_PATH=/jaeger</code> — serves the UI at <code>/jaeger/</code> instead of <code>/</code> (required for ingress path-based routing)</li>
+</ul>
+</div>
+
+<h3>Accessing the Jaeger UI</h3>
+<div class="card">
+<p><strong>Via ingress:</strong> <code>https://milo.crabdance.com/jaeger/</code></p>
+<p><strong>Via port-forward (direct):</strong></p>
+<pre><code>kubectl -n cinemas port-forward svc/jaeger 16686:16686 &amp;
+open http://localhost:16686/jaeger/</code></pre>
+<p>In the UI, select a service from the <strong>Service</strong> dropdown and click <strong>Find Traces</strong>. Each trace shows the full request lifecycle including HTTP method, path, status code, and timing. Cross-service traces (e.g. dalogin → mbooks via ServiceClient) appear as multi-span traces.</p>
+</div>
+
+<h3>Disabling OpenTelemetry</h3>
+<div class="card">
+<p>To disable tracing on a specific service without redeployment, set the environment variable:</p>
+<pre><code>QUARKUS_OTEL_ENABLED=false</code></pre>
+<p>This overrides the <code>application.properties</code> default. The service will start without the OpenTelemetry agent and will not export traces.</p>
 </div>
 </section>
 
@@ -2722,6 +2826,9 @@ python3 k8infra/test-login-admin.py</code></pre>
   <tr><td><code>QUARKUS_DATASOURCE_USERNAME</code></td><td><code>sqluser</code></td><td>—</td><td>Quarkus datasource username.</td></tr>
   <tr><td><code>QUARKUS_DATASOURCE_PASSWORD</code></td><td><code>sqluserpw</code></td><td>—</td><td>Quarkus datasource password.</td></tr>
   <tr><td><code>QUARKUS_DATASOURCE_JDBC_URL</code></td><td><code>jdbc:mysql://mysql:3306/login_</code></td><td>—</td><td>Quarkus JDBC URL (supplements <code>DB_URL</code>).</td></tr>
+  <tr><td><code>QUARKUS_OTEL_ENABLED</code></td><td><code>true</code></td><td>—</td><td>Enable OpenTelemetry distributed tracing.</td></tr>
+  <tr><td><code>QUARKUS_OTEL_EXPORTER_OTLP_ENDPOINT</code></td><td><code>http://jaeger:4318</code></td><td>—</td><td>OTLP collector endpoint (HTTP/protobuf).</td></tr>
+  <tr><td><code>QUARKUS_OTEL_EXPORTER_OTLP_PROTOCOL</code></td><td><code>http/protobuf</code></td><td>—</td><td>OTLP transport protocol (avoids OkHttp/gRPC dependency).</td></tr>
 </table>
 
 <h3>mbook-quarkus</h3>
@@ -2729,7 +2836,8 @@ python3 k8infra/test-login-admin.py</code></pre>
   <tr><th>Variable</th><th>K8s Value</th><th>Local Default</th><th>Purpose</th></tr>
   <tr><td><code>DB_URL</code></td><td><code>jdbc:mysql://mysql:3306/login_</code></td><td><code>jdbc:mysql://localhost:3306/login_</code></td><td>JDBC URL for the login_ database.</td></tr>
   <tr><td><code>BOOTSTRAP_URL</code></td><td><code>kafka:9092</code></td><td><code>localhost:9092</code></td><td>Kafka bootstrap server address.</td></tr>
-  <tr><td><code>QUARKUS_OTEL_ENABLED</code></td><td><code>false</code></td><td>—</td><td>Disable OpenTelemetry agent (the jar is bundled but not used in local dev).</td></tr>
+  <tr><td><code>QUARKUS_OTEL_ENABLED</code></td><td><code>true</code></td><td>—</td><td>Enable OpenTelemetry distributed tracing.</td></tr>
+  <tr><td><code>QUARKUS_OTEL_EXPORTER_OTLP_ENDPOINT</code></td><td><code>http://jaeger:4317</code></td><td>—</td><td>OTLP collector endpoint (gRPC).</td></tr>
   <tr><td><code>QUARKUS_DATASOURCE_*</code></td><td><em>(same pattern as dalogin)</em></td><td>—</td><td>Quarkus datasource config for login_ database.</td></tr>
 </table>
 
@@ -2738,7 +2846,8 @@ python3 k8infra/test-login-admin.py</code></pre>
   <tr><th>Variable</th><th>K8s Value</th><th>Local Default</th><th>Purpose</th></tr>
   <tr><td><code>DB_URL_BOOKS</code></td><td><code>jdbc:mysql://mysql:3306/book</code></td><td><code>jdbc:mysql://localhost:3306/book</code></td><td>JDBC URL for the book database. Read by <code>HibernateUtil</code> to override <code>hibernate.cfg.xml</code> defaults.</td></tr>
   <tr><td><code>BOOTSTRAP_URL</code></td><td><code>kafka:9092</code></td><td><code>localhost:9092</code></td><td>Kafka bootstrap server address.</td></tr>
-  <tr><td><code>QUARKUS_OTEL_ENABLED</code></td><td><code>false</code></td><td>—</td><td>Disable OpenTelemetry.</td></tr>
+  <tr><td><code>QUARKUS_OTEL_ENABLED</code></td><td><code>true</code></td><td>—</td><td>Enable OpenTelemetry distributed tracing.</td></tr>
+  <tr><td><code>QUARKUS_OTEL_EXPORTER_OTLP_ENDPOINT</code></td><td><code>http://jaeger:4317</code></td><td>—</td><td>OTLP collector endpoint (gRPC).</td></tr>
   <tr><td><code>QUARKUS_DATASOURCE_*</code></td><td><em>(pointing to book schema)</em></td><td>—</td><td>Quarkus datasource config for book database.</td></tr>
 </table>
 
@@ -2746,6 +2855,9 @@ python3 k8infra/test-login-admin.py</code></pre>
 <table>
   <tr><th>Variable</th><th>K8s Value</th><th>Local Default</th><th>Purpose</th></tr>
   <tr><td><code>PICTURES_BASE_DIR</code></td><td><code>/pictures</code></td><td><code>../pictures</code></td><td>Filesystem path to the pictures directory containing <code>images/</code>, <code>movies/</code>, <code>venues/</code>, <code>profiles/</code> sub-folders.</td></tr>
+  <tr><td><code>QUARKUS_OTEL_ENABLED</code></td><td><code>true</code></td><td>—</td><td>Enable OpenTelemetry distributed tracing.</td></tr>
+  <tr><td><code>QUARKUS_OTEL_EXPORTER_OTLP_ENDPOINT</code></td><td><code>http://jaeger:4318</code></td><td>—</td><td>OTLP collector endpoint (HTTP/protobuf).</td></tr>
+  <tr><td><code>QUARKUS_OTEL_EXPORTER_OTLP_PROTOCOL</code></td><td><code>http/protobuf</code></td><td>—</td><td>OTLP transport protocol (avoids OkHttp/gRPC dependency).</td></tr>
 </table>
 
 <h3>Infrastructure</h3>
@@ -2754,6 +2866,8 @@ python3 k8infra/test-login-admin.py</code></pre>
   <tr><td><code>MYSQL_ROOT_PASSWORD</code></td><td>MySQL</td><td><code>rootpw</code></td><td>MySQL root password.</td></tr>
   <tr><td><code>ZOO_STANDALONE_ENABLED</code></td><td>ZooKeeper</td><td><code>true</code></td><td>Run in standalone mode (single node).</td></tr>
   <tr><td><code>ZOO_ADMINSERVER_ENABLED</code></td><td>ZooKeeper</td><td><code>false</code></td><td>Disable admin HTTP server.</td></tr>
+  <tr><td><code>COLLECTOR_OTLP_ENABLED</code></td><td>Jaeger</td><td><code>true</code></td><td>Enable OTLP gRPC + HTTP collector endpoints.</td></tr>
+  <tr><td><code>QUERY_BASE_PATH</code></td><td>Jaeger</td><td><code>/jaeger</code></td><td>Serve the Jaeger UI under <code>/jaeger/</code> path prefix (for ingress routing).</td></tr>
 </table>
 </section>
 
@@ -3108,6 +3222,9 @@ public String getHash(String pass, String user) throws SQLException {
   <tr><td><strong>book</strong></td><td>The MySQL database schema for movies, venues, screens, screening dates, seats, tickets, and purchases.</td></tr>
   <tr><td><strong>Apache Reverse Proxy</strong></td><td>httpd 2.4 running inside Kubernetes that routes HTTP requests to the correct backend service based on URL prefix (<code>/login</code>, <code>/mbook-1</code>, <code>/mbooks-1</code>, <code>/simple-service-webapp</code>). Also handles WebSocket upgrade proxying.</td></tr>
   <tr><td><strong>NGINX Ingress</strong></td><td>Kubernetes Ingress controller that terminates TLS (using the <code>cinemas-tls</code> secret) and forwards traffic to the Apache reverse proxy. External entry point for all client traffic.</td></tr>
+  <tr><td><strong>OpenTelemetry</strong></td><td>Vendor-neutral observability framework for distributed tracing. All four Quarkus services export traces via the <code>quarkus-opentelemetry</code> extension using the OTLP protocol.</td></tr>
+  <tr><td><strong>OTLP</strong></td><td>OpenTelemetry Protocol. The wire format for exporting traces to a collector. Supports gRPC (port 4317) and HTTP/protobuf (port 4318) transports.</td></tr>
+  <tr><td><strong>Jaeger</strong></td><td>Distributed tracing backend and UI. Deployed as <code>jaegertracing/all-in-one</code> — receives OTLP traces from all services and provides a web UI at <code>/jaeger/</code> for searching and visualising traces. Uses in-memory storage (traces lost on restart).</td></tr>
   <tr><td><strong>PVC</strong></td><td>Persistent Volume Claim. The <code>pictures-pvc</code> provides 500Mi of storage for movie posters, venue photos, and profile pictures served by simple-service-webapp.</td></tr>
 </table>
 </section>
@@ -3117,6 +3234,7 @@ public String getHash(String pass, String user) throws SQLException {
 <h2>Document Version History</h2>
 <table>
   <tr><th>Date</th><th>Version</th><th>Changes</th></tr>
+  <tr><td>March 20, 2026</td><td>1.5</td><td>Added: Observability section — OpenTelemetry distributed tracing enabled on all four backend services, Jaeger all-in-one deployment for trace collection and visualization (UI at <code>/jaeger/</code>). Updated: Kubernetes topology diagram (Jaeger pod), environment variables (OTel config per service), glossary (OpenTelemetry, OTLP, Jaeger). OTLP protocol choice documented (gRPC for mbook/mbooks, http/protobuf for dalogin/simple-service-webapp due to OkHttp dependency).</td></tr>
   <tr><td>March 20, 2026</td><td>1.4</td><td>Updated: iOS URL centralisation (<code>URLManager.swift</code> replaces hardcoded <code>serverURL</code>), WebSocket keepalive pings (30s client ping + server idle timeout disabled + <code>@OnError</code>/<code>@OnMessage</code> pong handling), VenuesVC storyboard fix (removed non-existent <code>Venue</code> custom class, restored navigation to VenuesDetailsVC), SessionAttributeListener refactored (removed static mutable state, switched to <code>org.jboss.logging</code>), mbooks deployment liveness/readiness probes, Apache WebSocket proxy rule ordering fix, removed obsolete <code>fix-sprocs.sql</code>/<code>fix-triggers.sql</code> (SQL scripts now self-contained).</td></tr>
   <tr><td>March 16, 2026</td><td>1.3</td><td>Added: Hibernate Entity Relationships diagram (lazy vs eager fetch types with annotations), Movie Booking Entity Walk (step-by-step cache/DB interaction per user action), Admin Venue Insertion cascade diagram with gotchas table, mbook entities (login_ schema), Service Interaction Map with inter-service headers. Updated AGENTS.md with refactoring roadmap, entity relationship guide, and L2 cache summary.</td></tr>
   <tr><td>March 16, 2026</td><td>1.2</td><td>Added: Registration &amp; Voucher Flow diagram, Password Reset Flow diagram, Web Frontend (AngularJS) documentation, Environment Variables reference, Configuration Files reference, Testing section, Glossary. Expanded iOS and booking documentation.</td></tr>

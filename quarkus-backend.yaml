@@ -240,6 +240,12 @@ spec:
               value: sqluserpw
             - name: QUARKUS_DATASOURCE_JDBC_URL
               value: jdbc:mysql://mysql:3306/login_
+            - name: QUARKUS_OTEL_ENABLED
+              value: "true"
+            - name: QUARKUS_OTEL_EXPORTER_OTLP_ENDPOINT
+              value: http://jaeger:4318
+            - name: QUARKUS_OTEL_EXPORTER_OTLP_PROTOCOL
+              value: http/protobuf
 ---
 apiVersion: v1
 kind: Service
@@ -289,7 +295,9 @@ spec:
             - name: BOOTSTRAP_URL
               value: kafka:9092
             - name: QUARKUS_OTEL_ENABLED
-              value: "false"
+              value: "true"
+            - name: QUARKUS_OTEL_EXPORTER_OTLP_ENDPOINT
+              value: http://jaeger:4317
 ---
 apiVersion: v1
 kind: Service
@@ -339,7 +347,9 @@ spec:
             - name: BOOTSTRAP_URL
               value: kafka:9092
             - name: QUARKUS_OTEL_ENABLED
-              value: "false"
+              value: "true"
+            - name: QUARKUS_OTEL_EXPORTER_OTLP_ENDPOINT
+              value: http://jaeger:4317
           readinessProbe:
             httpGet:
               path: /mbooks-1/rest/book/hello
@@ -385,6 +395,12 @@ spec:
           env:
             - name: PICTURES_BASE_DIR
               value: /pictures
+            - name: QUARKUS_OTEL_ENABLED
+              value: "true"
+            - name: QUARKUS_OTEL_EXPORTER_OTLP_ENDPOINT
+              value: http://jaeger:4318
+            - name: QUARKUS_OTEL_EXPORTER_OTLP_PROTOCOL
+              value: http/protobuf
           volumeMounts:
             - name: pictures
               mountPath: /pictures
@@ -457,6 +473,64 @@ spec:
   selector:
     app: apache
 ---
+# ===================== jaeger (tracing UI + OTLP collector) =====================
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: jaeger
+  namespace: cinemas
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: jaeger
+  template:
+    metadata:
+      labels:
+        app: jaeger
+    spec:
+      containers:
+        - name: jaeger
+          image: jaegertracing/all-in-one:latest
+          imagePullPolicy: IfNotPresent
+          ports:
+            - containerPort: 4317
+              name: otlp-grpc
+            - containerPort: 4318
+              name: otlp-http
+            - containerPort: 16686
+              name: ui
+          env:
+            - name: COLLECTOR_OTLP_ENABLED
+              value: "true"
+            - name: QUERY_BASE_PATH
+              value: /jaeger
+          readinessProbe:
+            httpGet:
+              path: /
+              port: 16686
+            initialDelaySeconds: 10
+            periodSeconds: 5
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: jaeger
+  namespace: cinemas
+spec:
+  selector:
+    app: jaeger
+  ports:
+    - name: otlp-grpc
+      port: 4317
+      targetPort: 4317
+    - name: otlp-http
+      port: 4318
+      targetPort: 4318
+    - name: ui
+      port: 16686
+      targetPort: 16686
+---
 # ===================== ingress =====================
 apiVersion: networking.k8s.io/v1
 kind: Ingress
@@ -484,3 +558,29 @@ spec:
                 name: apache
                 port:
                   number: 80
+---
+# ===================== jaeger UI ingress =====================
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: jaeger-ingress
+  namespace: cinemas
+  annotations:
+    nginx.ingress.kubernetes.io/ssl-redirect: "true"
+spec:
+  ingressClassName: nginx
+  tls:
+    - hosts:
+        - milo.crabdance.com
+      secretName: cinemas-tls
+  rules:
+    - host: milo.crabdance.com
+      http:
+        paths:
+          - path: /jaeger
+            pathType: Prefix
+            backend:
+              service:
+                name: jaeger
+                port:
+                  number: 16686
