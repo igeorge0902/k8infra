@@ -186,6 +186,22 @@ Point `milo.crabdance.com` to localhost (iOS simulator uses host DNS):
 echo "127.0.0.1 milo.crabdance.com" | sudo tee -a /etc/hosts
 ```
 
+Flush any leftover `pf` rules from a previous qemu2 setup (they intercept port 443):
+
+```bash
+sudo pfctl -F all 2>/dev/null; true
+```
+
+The ingress addon may create the controller service as `NodePort` instead of `LoadBalancer`.
+Check and patch if needed (the tunnel only assigns IPs to `LoadBalancer` services):
+
+```bash
+kubectl -n ingress-nginx get svc ingress-nginx-controller
+# If TYPE is NodePort:
+kubectl -n ingress-nginx patch svc ingress-nginx-controller \
+  -p '{"spec":{"type":"LoadBalancer"}}'
+```
+
 Start the tunnel (keeps running in the foreground — use a dedicated terminal):
 
 ```bash
@@ -279,7 +295,8 @@ kubectl -n cinemas rollout restart deployment/dalogin
 
 | Symptom | Cause | Fix |
 |---------|-------|-----|
-| `minikube tunnel` won't bind to 443 | Another process on port 443 (e.g. old `pf` redirect) | `sudo pfctl -F all`, then retry tunnel |
+| `minikube tunnel` won't bind to 443 | Old `pf` redirect rule from qemu2 setup intercepting port 443 | `sudo pfctl -F all` to flush all pf rules, tunnel will bind immediately |
+| Ingress external IP stays `<pending>` | Ingress addon created the service as `NodePort` instead of `LoadBalancer` | `kubectl -n ingress-nginx patch svc ingress-nginx-controller -p '{"spec":{"type":"LoadBalancer"}}'` |
 | iOS: `NSURLErrorDomain: -1003` or `Code=57` | Tunnel not running, or `/etc/hosts` missing | Start `sudo minikube tunnel`, verify `/etc/hosts` |
 | `ImagePullBackOff` on pods | Images not loaded into Minikube | Re-run image build/load (step 2) |
 | WebSocket: `Socket is not connected` | Apache proxy rule ordering wrong, or HTTP/2 stripping headers | Check `proxy.conf` ordering; use `--http1.1` for curl tests |
