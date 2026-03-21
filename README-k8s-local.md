@@ -2,12 +2,32 @@
 
 This runbook brings up all backend services (`dalogin-quarkus`, `mbook-quarkus`, `mbooks-quarkus`, `simple-service-webapp-quarkus`) plus MySQL, Kafka, Zookeeper, and an Apache reverse proxy for local development.
 
-## 1) Recommended local cluster
+## Prerequisites
 
-Use **Minikube** (easiest ingress workflow for this repo).
+| Tool | Install | Notes |
+|------|---------|-------|
+| Docker CLI | `brew install docker` | Docker **client** only — no Docker Desktop licence needed |
+| colima | `brew install colima` | Lightweight Docker-compatible runtime for macOS |
+| Minikube | `brew install minikube` | Local Kubernetes cluster |
+| Podman *(optional)* | `brew install podman` | Only needed if you prefer Podman for image builds |
+| kubectl | `brew install kubectl` | Kubernetes CLI (or via `minikube kubectl`) |
+
+## 1) Start the container runtime and cluster
+
+### Start colima (Docker daemon)
 
 ```bash
-minikube start --driver=qemu2 --cpus=4 --memory=8192
+colima start --cpu 4 --memory 8 --disk 60
+```
+
+> colima provides a Docker-compatible daemon without Docker Desktop.
+> The Docker CLI (`docker build`, `docker images`, etc.) works against it.
+> To stop: `colima stop`. To check status: `colima status`.
+
+### Start Minikube with the Docker driver
+
+```bash
+minikube start --driver=docker --cpus=4 --memory=8192
 ```
 
 Enable the NGINX ingress controller:
@@ -15,6 +35,11 @@ Enable the NGINX ingress controller:
 ```bash
 minikube addons enable ingress
 ```
+
+> **Why Docker instead of qemu2?** The Docker driver runs Minikube as a container
+> on the host network. `minikube tunnel` provides a stable LoadBalancer IP on
+> `127.0.0.1` — no more `kubectl port-forward` + `pf` redirect that dies on idle,
+> sleep/wake, or reboot. Image loading is also simpler (no tarball + retag dance).
 
 ## 2) Build Quarkus artifacts + container images
 
@@ -33,7 +58,29 @@ Build JAR layouts first:
 (cd simple-service-webapp-quarkus && ./mvnw package -DskipTests)
 ```
 
-Build images with Podman:
+> If behind a corporate proxy that blocks Maven Central, use the bundled settings:
+> `./mvnw -s ../k8infra/settings-local.xml package -DskipTests`
+
+### Build images and load into Minikube
+
+**Option A — Build inside Minikube's Docker (fastest, no loading needed):**
+
+```bash
+eval $(minikube docker-env)
+
+docker build -t dalogin-quarkus:local              ./dalogin-quarkus
+docker build -t mbook-quarkus:local                ./mbook-quarkus
+docker build -t mbooks-quarkus:local               ./mbooks-quarkus
+docker build -t simple-service-webapp-quarkus:local ./simple-service-webapp-quarkus
+
+eval $(minikube docker-env --unset)
+```
+
+> `eval $(minikube docker-env)` points the Docker CLI at Minikube's internal daemon.
+> Images built this way are immediately visible to Kubernetes — no `image load` or
+> retag step. Run `--unset` afterwards to restore the normal Docker context.
+
+**Option B — Build with Podman, then load:**
 
 ```bash
 podman build -t dalogin-quarkus:local              ./dalogin-quarkus
@@ -42,23 +89,16 @@ podman build -t mbooks-quarkus:local               ./mbooks-quarkus
 podman build -t simple-service-webapp-quarkus:local ./simple-service-webapp-quarkus
 ```
 
-### Load images into Minikube (qemu2 / containerd)
-
-With the qemu2 driver, `minikube image load <name>` does not see Podman images directly.
-Save each image as a tarball, load the tarball, then retag so Kubernetes finds it:
+Load into Minikube (Docker driver — no retag needed):
 
 ```bash
 for img in dalogin-quarkus mbook-quarkus mbooks-quarkus simple-service-webapp-quarkus; do
-  podman save -o /tmp/${img}.tar localhost/${img}:local
-  minikube image load /tmp/${img}.tar
-  minikube ssh -- sudo ctr -n k8s.io images tag \
-    localhost/${img}:local docker.io/library/${img}:local
+  podman save localhost/${img}:local | minikube image load --daemon=false -
 done
 ```
 
-> **Why the retag?** `minikube image load` stores the image under the `localhost/` prefix,
-> but Kubernetes resolves bare image names via `docker.io/library/`.
-> The `ctr images tag` command creates the alias Kubernetes expects.
+> With the Docker driver, `minikube image load` works reliably and the retag
+> step (`ctr images tag`) that was required with qemu2 is **not needed**.
 
 ## 3) Deploy backend manifests
 
@@ -138,7 +178,7 @@ kubectl create secret tls cinemas-tls \
 
 The ingress in `quarkus-backend.yaml` already references `cinemas-tls`.
 
-### Expose locally
+### Expose locally with `minikube tunnel`
 
 Point `milo.crabdance.com` to localhost (iOS simulator uses host DNS):
 
@@ -146,22 +186,19 @@ Point `milo.crabdance.com` to localhost (iOS simulator uses host DNS):
 echo "127.0.0.1 milo.crabdance.com" | sudo tee -a /etc/hosts
 ```
 
-Port-forward the ingress HTTPS port and redirect port 443 so the iOS app
-and test scripts can reach `https://milo.crabdance.com` on the default port:
+Start the tunnel (keeps running in the foreground — use a dedicated terminal):
 
 ```bash
-kubectl port-forward -n ingress-nginx svc/ingress-nginx-controller 8443:443 &
+sudo minikube tunnel
 ```
 
-Add a macOS `pf` redirect so port 443 reaches the port-forward:
-
-```bash
-echo "rdr pass on lo0 inet proto tcp from any to 127.0.0.1 port 443 -> 127.0.0.1 port 8443" \
-  | sudo pfctl -ef -
-```
-
-> **Note:** This replaces the active pf ruleset. If you use Cisco AnyConnect VPN,
-> reconnect it after running this command. Rules reset on reboot.
+> **How it works:** `minikube tunnel` assigns `127.0.0.1` as the external IP for
+> the `ingress-nginx-controller` LoadBalancer service. Traffic to `127.0.0.1:443`
+> goes directly to the NGINX ingress — no `kubectl port-forward` or `pf` redirect
+> needed. The tunnel auto-reconnects after sleep/wake.
+>
+> **`sudo` is required** because it binds to privileged port 443. The tunnel
+> process stays running; stop it with Ctrl+C.
 
 ### Verify
 
@@ -182,15 +219,6 @@ curl -sk --http1.1 -o /dev/null -w "%{http_code}\n" \
   https://milo.crabdance.com/mbook-1/ws
 # → 101
 ```
-
-> **⚠️ The port-forward and pf redirect do not survive a reboot.**
-> If the iOS app shows `NSPOSIXErrorDomain Code=57 "Socket is not connected"` or
-> `NSURLErrorDomain: -1003`, the pf redirect is missing. Re-run:
-> ```bash
-> kubectl port-forward -n ingress-nginx svc/ingress-nginx-controller 8443:443 &
-> echo "rdr pass on lo0 inet proto tcp from any to 127.0.0.1 port 443 -> 127.0.0.1 port 8443" \
->   | sudo pfctl -ef -
-> ```
 
 The iOS app (via `URLManager.baseURL = "https://milo.crabdance.com"`) and the `CustomURLSessionDelegate`
 already trust self-signed certs for `milo.crabdance.com`.
@@ -218,14 +246,22 @@ python3 k8infra/test-login.py
 
 After editing source, rebuild and reload only the changed service:
 
+**If using `minikube docker-env` (Option A):**
+
 ```bash
-# Example: dalogin changed
+eval $(minikube docker-env)
+(cd dalogin-quarkus && ./mvnw package -DskipTests)
+docker build -t dalogin-quarkus:local ./dalogin-quarkus
+eval $(minikube docker-env --unset)
+kubectl -n cinemas rollout restart deployment/dalogin
+```
+
+**If using Podman (Option B):**
+
+```bash
 (cd dalogin-quarkus && ./mvnw package -DskipTests)
 podman build -t dalogin-quarkus:local ./dalogin-quarkus
-podman save -o /tmp/dalogin-quarkus.tar localhost/dalogin-quarkus:local
-minikube image load /tmp/dalogin-quarkus.tar
-minikube ssh -- sudo ctr -n k8s.io images tag \
-  localhost/dalogin-quarkus:local docker.io/library/dalogin-quarkus:local
+podman save localhost/dalogin-quarkus:local | minikube image load --daemon=false -
 kubectl -n cinemas rollout restart deployment/dalogin
 ```
 
@@ -237,6 +273,68 @@ kubectl -n cinemas rollout restart deployment/dalogin
 - MySQL runs with `--lower-case-table-names=1` so that Hibernate entity names (lowercase) match the dump's mixed-case table names.
 - Kafka topics: producers publish to `ios-movies-notifications2` (movies) and `ios-users-notifications` (users); consumers subscribe to matching topics. Both producers and consumers read `BOOTSTRAP_URL` from the environment.
 - iOS URLs are centralised in `URLManager.swift` (`baseHost = "milo.crabdance.com"`); the self-signed cert is trusted via `CustomURLSessionDelegate`. To point at a different host, change only `URLManager.baseHost`.
-- The port-forward (`8443:443`) and pf redirect (`443 → 8443`) **do not survive a reboot**. If the iOS app logs `NSURLErrorDomain: -1003` or `Code=57 "Socket is not connected"`, re-run both commands from step 5.
-- To tear down the pf redirect: `sudo pfctl -F all` (or just reboot)
 - To remove the hosts entry: `sudo sed -i '' '/milo.crabdance.com/d' /etc/hosts`
+
+## Troubleshooting
+
+| Symptom | Cause | Fix |
+|---------|-------|-----|
+| `minikube tunnel` won't bind to 443 | Another process on port 443 (e.g. old `pf` redirect) | `sudo pfctl -F all`, then retry tunnel |
+| iOS: `NSURLErrorDomain: -1003` or `Code=57` | Tunnel not running, or `/etc/hosts` missing | Start `sudo minikube tunnel`, verify `/etc/hosts` |
+| `ImagePullBackOff` on pods | Images not loaded into Minikube | Re-run image build/load (step 2) |
+| WebSocket: `Socket is not connected` | Apache proxy rule ordering wrong, or HTTP/2 stripping headers | Check `proxy.conf` ordering; use `--http1.1` for curl tests |
+| `minikube image load` hangs | Large images + Docker driver | Use `minikube docker-env` (Option A) instead |
+| colima not responding | VM crashed after sleep | `colima stop && colima start --cpu 4 --memory 8 --disk 60` |
+
+---
+
+## Appendix: qemu2 driver (legacy)
+
+If you cannot use the Docker driver (e.g. no Docker CLI, no colima), the qemu2
+driver works but requires manual port-forwarding that is fragile:
+
+```bash
+minikube start --driver=qemu2 --cpus=4 --memory=8192
+minikube addons enable ingress
+```
+
+### Image loading (qemu2)
+
+With qemu2, `minikube image load` needs tarballs and a retag step:
+
+```bash
+for img in dalogin-quarkus mbook-quarkus mbooks-quarkus simple-service-webapp-quarkus; do
+  podman save -o /tmp/${img}.tar localhost/${img}:local
+  minikube image load /tmp/${img}.tar
+  minikube ssh -- sudo ctr -n k8s.io images tag \
+    localhost/${img}:local docker.io/library/${img}:local
+done
+```
+
+### Networking (qemu2)
+
+Instead of `minikube tunnel`, you must use port-forward + pf redirect:
+
+```bash
+kubectl port-forward -n ingress-nginx svc/ingress-nginx-controller 8443:443 &
+echo "rdr pass on lo0 inet proto tcp from any to 127.0.0.1 port 443 -> 127.0.0.1 port 8443" \
+  | sudo pfctl -ef -
+```
+
+> **⚠️ Both commands do not survive a reboot or sleep/wake.** The port-forward
+> process dies silently and must be re-run. This is the main reason the Docker
+> driver is recommended instead.
+
+To tear down: `sudo pfctl -F all` and kill the port-forward background process.
+
+### Redeploy (qemu2)
+
+```bash
+(cd dalogin-quarkus && ./mvnw package -DskipTests)
+podman build -t dalogin-quarkus:local ./dalogin-quarkus
+podman save -o /tmp/dalogin-quarkus.tar localhost/dalogin-quarkus:local
+minikube image load /tmp/dalogin-quarkus.tar
+minikube ssh -- sudo ctr -n k8s.io images tag \
+  localhost/dalogin-quarkus:local docker.io/library/dalogin-quarkus:local
+kubectl -n cinemas rollout restart deployment/dalogin
+```
