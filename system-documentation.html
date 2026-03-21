@@ -100,6 +100,7 @@
     <li><a href="#request-flow">Request Flow</a></li>
     <li><a href="#auth-flow">Authentication Flow</a></li>
     <li><a href="#booking-flow">Booking &amp; Payment Flow</a></li>
+    <li><a href="#payment-workflow">Payment Workflow Deep-Dive</a></li>
     <li><a href="#booking-hibernate-caching">Booking · Hibernate &amp; Caching</a></li>
     <li><a href="#entity-relationships">Entity Relationships (Lazy/Eager)</a></li>
     <li><a href="#booking-entity-walk">Booking Entity Walk</a></li>
@@ -117,6 +118,7 @@
     <li class="section-title">Web Frontend</li>
     <li><a href="#web-overview">AngularJS Client</a></li>
     <li><a href="#web-pages">Pages &amp; Navigation</a></li>
+    <li><a href="#film-review-ui">Film-Review Booking UI</a></li>
     <li class="section-title">iOS Client</li>
     <li><a href="#ios-overview">App Overview</a></li>
     <li><a href="#ios-architecture">Architecture &amp; Networking</a></li>
@@ -146,7 +148,7 @@
 
 <!-- ──────── OVERVIEW ──────── -->
 <section id="overview">
-<h1>Cinemas Platform <small>System Documentation — March 2026</small></h1>
+<h1>Cinemas Platform <small>System Documentation — March 2026 (v1.8)</small></h1>
 <p>A full-stack cinema booking platform consisting of four Quarkus microservices, two MySQL schemas, Kafka-based realtime broadcasting, and iOS / AngularJS clients.</p>
 
 <div class="grid-3">
@@ -539,31 +541,273 @@
 </div>
 </section>
 
+<!-- ──────── PAYMENT WORKFLOW DEEP-DIVE ──────── -->
+<section id="payment-workflow">
+<h2>Payment Workflow Deep-Dive</h2>
+<p>The complete payment workflow spans three services (<code>dalogin</code>, <code>mbooks</code>, and the Braintree Sandbox gateway) and covers seat selection, reservation with pessimistic locking, payment processing, and rollback on failure. Both the iOS client and the Film-Review web UI use the <strong>same</strong> proxy servlet path through <code>dalogin</code>.</p>
+
+<h3>1. End-to-End Sequence</h3>
+<div class="card">
+<pre style="font-family:monospace;font-size:12px;line-height:1.5;overflow-x:auto">
+┌──────────────────┐    ┌──────────────────┐    ┌──────────────────┐    ┌──────────────────┐    ┌──────────────────┐
+│  Client           │    │  dalogin          │    │  mbooks           │    │  MySQL (book)     │    │  Braintree        │
+│  (iOS / Web)      │    │  Proxy Servlets   │    │  BookController   │    │                   │    │  Sandbox          │
+└────────┬─────────┘    └────────┬─────────┘    └────────┬─────────┘    └────────┬─────────┘    └────────┬─────────┘
+         │                        │                        │                        │                        │
+         │ ① Browse movies (public, no auth)               │                        │                        │
+         │───────────────────────────────────────────────>  │                        │                        │
+         │                        │                GET /book/movies                  │                        │
+         │                        │                        │── query (L2-cached) ──> │                        │
+         │<─────────────────────── movies JSON ─────────── │<────────────────────── │                        │
+         │                        │                        │                        │                        │
+         │ ② Select movie → venues (public)                │                        │                        │
+         │───────────────────────────────────────────────>  │                        │                        │
+         │                        │           GET /book/venue/v2/{movieId}           │                        │
+         │<─────────────────────── venues JSON ──────────  │                        │                        │
+         │                        │                        │                        │                        │
+         │ ③ Select venue → dates (public)                 │                        │                        │
+         │───────────────────────────────────────────────>  │                        │                        │
+         │                        │       GET /book/dates/{locationId}/{movieId}     │                        │
+         │<─────────────────────── dates JSON ───────────  │                        │                        │
+         │                        │                        │                        │                        │
+         │ ④ Select date → seat map (public, NOT cached)   │                        │                        │
+         │───────────────────────────────────────────────>  │                        │                        │
+         │                        │        GET /book/seats/{screeningDateId}         │                        │
+         │                        │                        │── fresh DB query ─────> │                        │
+         │<─────────────────────── seats JSON ───────────  │<────────────────────── │                        │
+         │                        │                        │                        │                        │
+         │ ⑤ GET client token (session required)           │                        │                        │
+         │─── GET /login/CheckOut ───────────────────────> │                        │                        │
+         │         │  AuthFilter validates session+XSRF    │                        │                        │
+         │         │  ActiveVoucherFilter checks voucher   │                        │                        │
+         │         │  CheckOut.doGet() → ServiceClient     │                        │                        │
+         │         │  (forwards uuid, token2, TIME_,       │                        │                        │
+         │         │   cookies, Ciphertext headers)        │                        │                        │
+         │         │──────────────────────────────────────> │                        │                        │
+         │         │      GET /book/payment/clientToken     │                        │                        │
+         │         │   CiphertextFilter: Ciphertext==token2 │                        │                        │
+         │         │   CookieFilter: XSRF-TOKEN ==         │                        │                        │
+         │         │     AES(SALT, IV, TIME_, token2)       │                        │                        │
+         │         │                                        │────────────────────────────── generate() ─────> │
+         │<──────── {"clientToken": "..."} ──────────────  │<─────────────────────────────── token ──────── │
+         │                        │                        │                        │                        │
+         │ ⑥ User fills payment form (Braintree Drop-in)   │                        │                        │
+         │    iOS: BTDropInController (native SDK)          │                        │                        │
+         │    Web: braintree.dropin.create() (JS SDK)       │                        │                        │
+         │    → user enters card → requestPaymentMethod()   │                        │                        │
+         │    → receives payment nonce                      │                        │                        │
+         │                        │                        │                        │                        │
+         │ ⑦ POST checkout (session required)              │                        │                        │
+         │─── POST /login/CheckOut ──────────────────────> │                        │                        │
+         │    Body: payment_method_nonce=...                │                        │                        │
+         │          &orderId=<currentTimeMillis>            │                        │                        │
+         │          &seatsToBeReserved=<JSON>               │                        │                        │
+         │         │  AuthFilter + ActiveVoucherFilter      │                        │                        │
+         │         │  CheckOut.doPost() → ServiceClient     │                        │                        │
+         │         │──────────────────────────────────────> │                        │                        │
+         │         │  POST /book/payment/fullcheckout2      │                        │                        │
+         │         │  CiphertextFilter + CookieFilter       │                        │                        │
+         │         │                                        │                        │                        │
+         │         │  ┌─ fullcheckout2() ─────────────────────────────────────────── │                        │
+         │         │  │ Parse seatsToBeReserved JSON        │                        │                        │
+         │         │  │ For each screening+seats:           │                        │                        │
+         │         │  │   TicketService.reserveTickets()    │                        │                        │
+         │         │  │   → BookingHandlerImpl.returnTickets()                       │                        │
+         │         │  │   → DAO.bookTickets():              │                        │                        │
+         │         │  │     • Create Purchase entity        │── INSERT Purchase ───> │                        │
+         │         │  │     • For each seat number:         │                        │                        │
+         │         │  │       HQL join SD→V→Screen→Seats    │── SELECT + PESSIMISTIC │                        │
+         │         │  │       PESSIMISTIC_WRITE lock        │   _WRITE lock ───────> │                        │
+         │         │  │     • If ANY seat isReserved!="0":  │                        │                        │
+         │         │  │       ROLLBACK → throw exception    │── ROLLBACK ──────────> │                        │
+         │         │  │     • Else: mark all isReserved="1" │── UPDATE Seats ──────> │                        │
+         │         │  │       create Ticket entities        │── INSERT Tickets ────> │                        │
+         │         │  │       COMMIT                        │── COMMIT ────────────> │                        │
+         │         │  │                                     │                        │                        │
+         │         │  │ Calculate totalAmount + totalTax    │                        │                        │
+         │         │  │ Get/create Braintree customer ID    │── query Purchase ────> │                        │
+         │         │  │                                     │                        │                        │
+         │         │  │ Build TransactionRequest:           │                        │                        │
+         │         │  │   merchantAccountId="testcompany"   │                        │                        │
+         │         │  │   customerId, amount, taxAmount     │                        │                        │
+         │         │  │   paymentMethodNonce, submitForSettlement=true               │                        │
+         │         │  │                                     │                        │                        │
+         │         │  │ PaymentService.processTransaction() │───────────────────────────── sale(request) ──> │
+         │         │  │                                     │<──────────────────────────── Result&lt;Txn&gt; ────── │
+         │         │  │                                     │                        │                        │
+         │         │  │ IF Braintree fails:                 │                        │                        │
+         │         │  │   rollbackTickets() → delete        │── DELETE tickets ────> │                        │
+         │         │  │   tickets + purchase                │── DELETE purchase ───> │                        │
+         │         │  │   → error response                  │                        │                        │
+         │         │  │                                     │                        │                        │
+         │         │  │ IF Braintree succeeds:              │                        │                        │
+         │         │  │   Store BraintreeCustomerId         │── UPDATE Purchase ──> │                        │
+         │         │  │   Refresh seat map from DB          │── SELECT Seats ──────> │                        │
+         │         │  │   Return {AuthCode, Status,         │                        │                        │
+         │         │  │     Amount, tickets, seatsforscreen} │                        │                        │
+         │         │  └──────────────────────────────────── │                        │                        │
+         │         │                                        │                        │                        │
+         │<──────── JSON response ───────────────────────  │                        │                        │
+         │                        │                        │                        │                        │
+</pre>
+</div>
+
+<h3>2. Seat Reservation — Pessimistic Locking</h3>
+<div class="card">
+<p><code>DAO.bookTickets()</code> is the core reservation method. It is <code>synchronized</code> at the Java level and uses database-level <code>PESSIMISTIC_WRITE</code> locks to prevent double-booking.</p>
+<table>
+  <tr><th>Step</th><th>Action</th><th>Details</th></tr>
+  <tr><td>1</td><td>Create Purchase</td><td><code>session.save(purchase)</code> + <code>flush()</code>. The Purchase has <code>uuid</code> (user), <code>orderId</code> (timestamp), and <code>time</code> (current date).</td></tr>
+  <tr><td>2</td><td>Lock each seat</td><td>For each seat number, HQL joins <code>ScreeningDates → Venues → Screen → Seats</code> and applies <code>LockModeType.PESSIMISTIC_WRITE</code>. This acquires a <code>SELECT ... FOR UPDATE</code> row lock in MySQL.</td></tr>
+  <tr><td>3</td><td>Check availability</td><td>If <strong>any</strong> locked seat has <code>isReserved != "0"</code>, the entire transaction is <strong>rolled back</strong> and a <code>CustomExceptions</code> is thrown. No partial booking.</td></tr>
+  <tr><td>4</td><td>Reserve seats</td><td>For each seat: set <code>isReserved = "1"</code>, create a <code>Ticket</code> entity linked to the Seat, Screen, and Purchase. Both <code>session.save(ticket)</code> and <code>session.update(seat)</code> are called.</td></tr>
+  <tr><td>5</td><td>Commit</td><td>Transaction commits — row locks released. Return list of created Ticket entities.</td></tr>
+</table>
+<p><strong>Key invariant:</strong> Seats are locked <em>before</em> the availability check, so no concurrent session can reserve the same seat between the check and the update. The <code>synchronized</code> keyword on the method provides a second layer of protection at the JVM level (single-instance deployment).</p>
+</div>
+
+<h3>3. Checkout Request Payload</h3>
+<div class="card">
+<p>Both iOS and web send identical payloads to <code>POST /login/CheckOut</code>:</p>
+<pre style="font-family:monospace;font-size:12px">
+payment_method_nonce=&lt;braintree_nonce&gt;&amp;orderId=&lt;currentTimeMillis&gt;&amp;seatsToBeReserved=&lt;json&gt;
+</pre>
+<p>Where <code>seatsToBeReserved</code> JSON structure:</p>
+<pre style="font-family:monospace;font-size:12px">
+{"seatsToBeReserved":[{"screeningDateId":"5","seat":"A1-B2-C3-"}]}
+</pre>
+<table>
+  <tr><th>Field</th><th>Type</th><th>Source</th><th>Notes</th></tr>
+  <tr><td><code>payment_method_nonce</code></td><td>String</td><td>Braintree Drop-in SDK</td><td>One-time-use token representing the user's payment method.</td></tr>
+  <tr><td><code>orderId</code></td><td>String (millis)</td><td><code>new Date().getTime()</code> (web) / <code>zeroTime(0).getCurrentMillis()</code> (iOS)</td><td>Timestamp used as order identifier.</td></tr>
+  <tr><td><code>screeningDateId</code></td><td>String</td><td>Seat selection screen</td><td>Passed as string; <code>JSONObject.getInt()</code> parses both <code>"5"</code> and <code>5</code>.</td></tr>
+  <tr><td><code>seat</code></td><td>String</td><td>Seat selection screen</td><td>Dash-separated seat <strong>numbers</strong> (not IDs) with trailing dash: <code>"A1-B2-C3-"</code>. <code>split("-")</code> ignores trailing empty string.</td></tr>
+</table>
+</div>
+
+<h3>4. dalogin Proxy Servlet Chain</h3>
+<div class="card">
+<p>Authenticated endpoints (<code>/login/CheckOut</code>, <code>/login/GetAllPurchases</code>, <code>/login/ManagePurchases</code>) are protected by two servlet filters before reaching the servlet:</p>
+<table>
+  <tr><th>Filter</th><th>Order</th><th>Checks</th><th>Rejects with</th></tr>
+  <tr><td><code>AuthFilter</code></td><td>1st</td><td>Valid session, valid <code>JSESSIONID</code>, <code>XSRF-TOKEN</code> cookie matches <code>session.getAttribute("XSRF-TOKEN")</code></td><td>HTTP 502 + JSON error</td></tr>
+  <tr><td><code>ActiveVoucherFilter</code></td><td>2nd</td><td>User account is activated (not expired/disabled), via <code>SQLAccess.checkActivation()</code></td><td>HTTP 502 + JSON error</td></tr>
+</table>
+<p>After the filters pass, the servlet (<code>CheckOut.java</code>) builds auth attributes from the HTTP session:</p>
+<table>
+  <tr><th>Attribute</th><th>Source</th><th>Used by</th></tr>
+  <tr><td><code>uuid</code></td><td><code>SQLAccess.getUUID(user)</code></td><td>mbooks — identifies the user for Purchase creation</td></tr>
+  <tr><td><code>token2</code></td><td><code>SQLAccess.getToken2(deviceId)</code> — first element</td><td>mbooks <code>CiphertextFilter</code> — must match <code>Ciphertext</code> header</td></tr>
+  <tr><td><code>TIME_</code></td><td><code>session.getCreationTime()</code></td><td>mbooks <code>CookieFilter</code> — AES input for XSRF-TOKEN recomputation</td></tr>
+</table>
+<p>The <code>ServiceClient</code> creates a ResteasyClient targeting <code>WILDFLY_URL + webApi2Context</code> (→ Apache → mbooks) and registers a <code>RequestFilter</code> that copies <code>X-Token</code>, <code>Ciphertext</code> (falls back to <code>token2</code> if absent), all auth attributes, and browser cookies onto the outgoing JAX-RS request.</p>
+</div>
+
+<h3>5. mbooks Security Filters</h3>
+<div class="card">
+<p>On the mbooks side, two <code>@PreMatching</code> JAX-RS filters run on paths containing <code>purchases</code> or <code>payment</code>:</p>
+<table>
+  <tr><th>Filter</th><th>Validation</th><th>Rejects with</th></tr>
+  <tr><td><code>CiphertextFilter</code></td><td><code>Ciphertext</code> header must equal <code>token2</code> header (trimmed)</td><td>HTTP 403 "Cannot access"</td></tr>
+  <tr><td><code>CookieFilter</code></td><td>Recomputes <code>AES(SALT, IV, TIME_, token2)</code> and compares with the <code>XSRF-TOKEN</code> cookie value (strips trailing <code>=</code>)</td><td>HTTP 403 "Cannot access X" or "Cannot access C"</td></tr>
+</table>
+<p>Browse endpoints (movies, venues, dates, seats) do <strong>not</strong> trigger these filters — their paths don't contain <code>purchases</code> or <code>payment</code>.</p>
+</div>
+
+<h3>6. Braintree Integration</h3>
+<div class="card">
+<table>
+  <tr><th>Component</th><th>SDK</th><th>Version</th></tr>
+  <tr><td>Web UI</td><td>Braintree Drop-in JS</td><td>1.44.1</td></tr>
+  <tr><td>iOS</td><td>Braintree iOS SDK / BraintreeDropIn</td><td>5.26.0 / 9.13.0</td></tr>
+  <tr><td>Backend</td><td>braintree-java</td><td>3.36.0</td></tr>
+</table>
+<p>All three use the same <strong>Braintree Sandbox</strong> gateway (environment: <code>SANDBOX</code>, merchant ID: configured in <code>PaymentService.java</code>). The flow is:</p>
+<ol>
+  <li><strong>Client token</strong> — generated server-side via <code>gateway.clientToken().generate()</code>, sent to the client for SDK initialization.</li>
+  <li><strong>Payment method nonce</strong> — client-side SDK collects card details and returns a one-time nonce (never touches the backend).</li>
+  <li><strong>Server-side transaction</strong> — <code>PaymentService.processTransaction()</code> calls <code>gateway.transaction().sale(request)</code> with the nonce, amount, tax, customer ID, and <code>submitForSettlement=true</code>.</li>
+</ol>
+<p><code>PaymentService.getOrCreateCustomerId()</code> checks if the user already has a Braintree customer ID (stored in <code>Purchase.brainTreeId</code>). If found, reuses it; otherwise creates a new customer via <code>gateway.customer().create()</code>.</p>
+</div>
+
+<h3>7. Success and Failure Responses</h3>
+<div class="card">
+<h4>Success response (<code>fullcheckout2</code>)</h4>
+<pre style="font-family:monospace;font-size:12px">
+{
+  "ResponseText": "hello",
+  "AuthCode": "...",         // Braintree processor authorization code
+  "ResponseCode": "...",     // Braintree processor response code
+  "Status": "submitted_for_settlement",
+  "Amount": 25.00,
+  "TaxAmount": "2.50",
+  "Success": "true",
+  "tickets": [...],          // created Ticket objects
+  "seatsforscreen": [...]    // refreshed seat list (updated isReserved flags)
+}
+</pre>
+
+<h4>Failure: seats already reserved</h4>
+<pre style="font-family:monospace;font-size:12px">
+{
+  "Error": "Tickets are already sold!",
+  "Success": "true",
+  "failedTickets": [...]
+}
+</pre>
+<p>Seats that were provisionally reserved during the failed attempt are rolled back via <code>ticketService.rollbackTickets()</code> → <code>DAO.cancelTicket()</code> — tickets are deleted, seats reset to <code>isReserved="0"</code>.</p>
+
+<h4>Failure: Braintree transaction declined</h4>
+<pre style="font-family:monospace;font-size:12px">
+{
+  "Error with Transaction": "Do Not Honor"
+}
+</pre>
+<p>Same rollback: provisionally created tickets and purchase are deleted, seats freed.</p>
+</div>
+
+<h3>8. Post-Booking Operations</h3>
+<div class="card">
+<table>
+  <tr><th>Operation</th><th>Client path</th><th>Proxy servlet</th><th>mbooks endpoint</th><th>DAO method</th></tr>
+  <tr><td>List purchases</td><td><code>GET /login/GetAllPurchases</code></td><td><code>GetAllPurchases.java</code></td><td><code>GET /book/purchases</code></td><td><code>getAllPurchases(uuid)</code></td></tr>
+  <tr><td>View tickets</td><td><code>GET /login/ManagePurchases?purchaseId=X</code></td><td><code>ManagePurchases.java</code></td><td><code>GET /book/purchases/tickets?purchaseId=X</code></td><td><code>getTicketsForPurchase(purchaseId)</code></td></tr>
+  <tr><td>Cancel tickets</td><td><code>POST /login/ManagePurchases</code></td><td><code>ManagePurchases.java</code></td><td><code>POST /book/managepurchases</code></td><td><code>cancelTicket(ticketIds, purchaseId)</code></td></tr>
+  <tr><td>Delete purchase</td><td><code>POST /login/ManagePurchases</code></td><td><code>ManagePurchases.java</code></td><td><code>POST /book/deletepurchases</code></td><td><code>deletePurchase(purchaseId)</code></td></tr>
+</table>
+<p><strong>Cancel tickets</strong> sends <code>purchaseId</code> + <code>ticketsToBeCancelled={"ticketIds":[42,43]}</code>. The DAO deletes each ticket, sets the corresponding seat's <code>isReserved="0"</code>, and if all tickets in the purchase are cancelled, deletes the Purchase entity too.</p>
+<p><strong>Delete purchase</strong> sends only <code>purchaseId</code> (no <code>ticketsToBeCancelled</code>). The <code>ManagePurchases</code> servlet dispatches to <code>ServiceClient.deletePurchases()</code>. The DAO frees all associated seats, then bulk-deletes the purchase.</p>
+</div>
+</section>
+
 <!-- ──────── BOOKING · HIBERNATE & CACHING DEEP-DIVE ──────── -->
 <section id="booking-hibernate-caching">
 <h2>Booking · Hibernate &amp; Caching Deep-Dive</h2>
 <p>The booking flow in <code>mbooks-quarkus</code> relies on a hand-managed Hibernate <code>SessionFactory</code> (not Quarkus-managed persistence) together with Infinispan-backed second-level and query caches. Understanding how these layers interact is essential for reasoning about data freshness, concurrency, and performance during the ticket-reservation lifecycle.</p>
 
-<h3>1. Singleton DAO &amp; Shared Session</h3>
+<h3>1. Singleton DAO &amp; Session-Per-Call</h3>
 <div class="card">
 <p><code>DAO</code> is instantiated once via a double-checked <code>DAO.instance()</code> pattern. It holds:</p>
 <ul>
   <li>A single <code>SessionFactory</code> built from <code>hibernate.cfg.xml</code> by <code>HibernateUtil</code>.</li>
-  <li>A <strong>static volatile</strong> <code>Session</code> object shared across all requests (opened at startup, reused via <code>factory.getCurrentSession()</code>).</li>
-  <li>All public methods are <code>synchronized</code>, serialising every database operation through the singleton — effectively making the DAO a global lock.</li>
+  <li>Each public method opens its own <code>Session</code> via <code>factory.openSession()</code> inside a <strong>try-with-resources</strong> block, ensuring sessions are closed after each call. There is no shared static session.</li>
+  <li><strong>Read-only methods</strong> (e.g. <code>getMovie</code>, <code>getAllMovies</code>, <code>getSeatsForScreening</code>) are <em>not</em> <code>synchronized</code> — concurrent reads proceed without contention.</li>
+  <li><strong>Write methods</strong> (e.g. <code>bookTickets</code>, <code>cancelTicket</code>, <code>insertNewScreen</code>) remain <code>synchronized</code> to serialise mutations.</li>
 </ul>
 <p>At construction time the factory's entire cache is evicted (<code>factory.getCache().evictAllRegions()</code>) to ensure a cold start. Statistics are enabled for monitoring (<code>hibernate.generate_statistics=true</code>).</p>
+<p><span class="badge badge-green">Refactored</span> Previously the DAO used a static volatile <code>Session</code> shared across all requests with all methods <code>synchronized</code>, serialising every database operation. The session-per-call pattern eliminates this global lock for reads while preserving data integrity for writes.</p>
 </div>
 
 <h3>2. Hibernate Configuration Highlights</h3>
 <table>
   <tr><th>Property</th><th>Value</th><th>Booking-Flow Impact</th></tr>
-  <tr><td><code>current_session_context_class</code></td><td><code>thread</code></td><td>Session is bound to the calling thread; the singleton's <code>synchronized</code> methods guarantee only one thread touches the session at a time.</td></tr>
+  <tr><td><code>current_session_context_class</code></td><td><code>thread</code></td><td>Session is bound to the calling thread. With session-per-call, each DAO method opens and closes its own session via <code>factory.openSession()</code>.</td></tr>
   <tr><td><code>connection.autocommit</code></td><td><code>false</code></td><td>Every DAO method manually begins/commits transactions. Seat-locking and ticket persistence happen inside explicit transaction boundaries.</td></tr>
   <tr><td><code>jdbc.batch_size</code></td><td><code>20</code></td><td>Bulk seat inserts (admin <code>addScreen</code>) and bulk ticket deletes (<code>deletePurchase</code>) are batched in groups of 20 for efficiency.</td></tr>
   <tr><td><code>order_inserts / order_updates</code></td><td><code>true</code></td><td>Hibernate reorders SQL to maximise batch effectiveness during multi-seat bookings.</td></tr>
   <tr><td><code>default_batch_fetch_size</code></td><td><code>10</code></td><td>Lazy collections (e.g. <code>Movie.screens</code>, <code>Location.venues</code>) are fetched in batches of 10, reducing N+1 queries when navigating entity graphs.</td></tr>
-  <tr><td><code>c3p0.max_size</code></td><td><code>100</code></td><td>Connection pool ceiling; the synchronized DAO means only one connection is actively used at a time, but pooled connections remain available for any future refactoring toward parallel access.</td></tr>
+  <tr><td><code>c3p0.max_size</code></td><td><code>100</code></td><td>Connection pool ceiling; with session-per-call, multiple concurrent read operations can use separate connections from the pool, while write operations are serialised by <code>synchronized</code>.</td></tr>
 </table>
 
 <h3>3. Second-Level Cache (Infinispan)</h3>
@@ -612,7 +856,7 @@
 <p>The primary booking entry point is <code>BookController.fullcheckout2()</code> → <code>TicketService.reserveTickets()</code> → <code>BookingHandlerImpl.returnTickets()</code> → <code>DAO.bookTickets()</code>.</p>
 <ol>
   <li><strong>Create Purchase row</strong> — <code>DAO.setPurchaseId(uuid, orderId)</code> inserts a new <code>Purchase</code> entity with a generated ID. Because <code>Purchase</code> is <em>not</em> entity-cached, this does not touch the L2 cache. However, it <em>does</em> invalidate the <code>purchases</code> query cache region (timestamp update).</li>
-  <li><strong>Lock each requested seat</strong> — For every seat number, <code>DAO.getSeatForAvailability(screeningDatesId, seatNumber)</code> executes an HQL join with <code>LockModeType.PESSIMISTIC_WRITE</code>. This acquires a database-level <code>SELECT … FOR UPDATE</code> row lock on the <code>Seats</code> row, preventing concurrent bookings from reserving the same seat. <code>Seats</code> is not L2-cached, so the lock always hits the database.</li>
+  <li><strong>Lock each requested seat</strong> — Within <code>DAO.bookTickets()</code>, for every seat number, an HQL join query with <code>LockModeType.PESSIMISTIC_WRITE</code> acquires a database-level <code>SELECT … FOR UPDATE</code> row lock on the <code>Seats</code> row, preventing concurrent bookings from reserving the same seat. All seat locking, availability checks, ticket creation, and seat-state updates happen within a single session and transaction. <code>Seats</code> is not L2-cached, so the lock always hits the database.</li>
   <li><strong>Availability check</strong> — If any seat's <code>isReserved != "0"</code>, a <code>CustomExceptions</code> is thrown, aborting the entire booking. The transaction is not committed, so the pessimistic locks are released on rollback.</li>
   <li><strong>Create tickets &amp; mark seats reserved</strong> — For each available seat:
     <ul>
@@ -622,7 +866,7 @@
     </ul>
     Since <code>Ticket</code> is L2-cached (read-write), the newly persisted ticket is placed into the <code>ticket</code> cache region upon transaction commit. <code>Seats</code> is not cached, so its update goes directly to the database.
   </li>
-  <li><strong>Return tickets (no explicit commit in bookTickets)</strong> — The <code>@Transactional</code> annotation on <code>bookTickets()</code> manages the commit. On success, the Hibernate flush writes all batched inserts/updates, the L2 cache is updated for <code>Ticket</code> entities, and query-cache timestamps for affected regions are bumped.</li>
+  <li><strong>Commit &amp; return tickets</strong> — On success, the transaction commits, flushing all batched inserts/updates. The L2 cache is updated for <code>Ticket</code> entities, and query-cache timestamps for affected regions are bumped. On failure, the transaction is rolled back and all pessimistic locks are released.</li>
 </ol>
 </div>
 
@@ -651,15 +895,14 @@
 <h4>How Consistency is Maintained</h4>
 <ul>
   <li><strong>Database-level pessimistic locks</strong> — <code>PESSIMISTIC_WRITE</code> on seats during booking prevents double-selling. This is the authoritative concurrency control.</li>
-  <li><strong>Synchronized DAO</strong> — The singleton's <code>synchronized</code> methods serialise all Hibernate operations, preventing session-level race conditions (Hibernate sessions are not thread-safe).</li>
+  <li><strong>Session-per-call with selective synchronisation</strong> — Each DAO method opens its own <code>Session</code> (Hibernate sessions are not thread-safe, so this is the correct pattern). Read-only methods run concurrently without locking. Write methods are <code>synchronized</code> on the singleton DAO instance, serialising mutations.</li>
   <li><strong>Read-write L2 cache strategy</strong> — Infinispan's read-write strategy uses soft locks: when an entity is updated, the cache entry is replaced with a lock marker until the transaction commits. Concurrent reads during this window bypass the cache and hit the database.</li>
   <li><strong>Timestamp-based query cache invalidation</strong> — The <code>timestamps</code> Infinispan cache tracks per-table modification times. When a booking commits (touching <code>Ticket</code>, <code>Seats</code>, <code>Purchase</code> tables), all query-cache entries that reference those tables are invalidated.</li>
 </ul>
 
 <h4>Known Limitations</h4>
 <ul>
-  <li>The global <code>synchronized</code> lock on the DAO serialises all operations — reads and writes alike. This limits throughput to one concurrent database operation at a time. Movie browsing (read-only, cacheable) is blocked while a booking transaction holds the lock.</li>
-  <li>The static shared session means all operations share the same persistence context. Long-running admin operations (e.g. generating 100+ seats) can grow the persistence context, increasing memory pressure until the next <code>flush()/clear()</code>.</li>
+  <li>Write methods are still globally serialised via <code>synchronized</code> on the DAO singleton. Concurrent bookings queue behind each other. This limits write throughput but ensures Hibernate session safety for mutations.</li>
   <li><code>Seats</code> is not L2-cached (by design, for freshness), but it also means repeated seat-map loads (e.g. polling for availability) always hit the database.</li>
   <li>The 5-minute idle timeout on entity and query caches means that after a quiet period, the first movie-listing request will see a cache miss and full DB round-trip.</li>
 </ul>
@@ -1428,11 +1671,22 @@
 <section id="realtime">
 <h2>Realtime / Kafka + WebSocket</h2>
 <table>
-  <tr><th>Topic</th><th>Producer</th><th>Consumer</th><th>Purpose</th></tr>
-  <tr><td><code>ios-users-notifications</code></td><td>mbook KafkaMessageProducer</td><td>mbook KafkaListener → WebSocketServer</td><td>User state changes (login, profile update)</td></tr>
-  <tr><td><code>ios-movies-notifications2</code></td><td>mbooks KafkaMessageProducer</td><td>mbook KafkaMoviesListener → WebSocketServer</td><td>Movie catalog changes, new screenings</td></tr>
+  <tr><th>Topic</th><th>Producer</th><th>Consumer (Group ID)</th><th>Purpose</th></tr>
+  <tr><td><code>ios-users-notifications</code></td><td>mbook KafkaMessageProducer</td><td>mbook KafkaListener (<code>mbook-users-group</code>) → WebSocketServer</td><td>User state changes (login, profile update)</td></tr>
+  <tr><td><code>ios-movies-notifications2</code></td><td>mbooks KafkaMessageProducer</td><td>mbook KafkaMoviesListener (<code>mbook-movies-group</code>) → event persistence</td><td>Movie catalog changes, new screenings (persisted in mbook)</td></tr>
+  <tr><td><code>ios-movies-notifications2</code></td><td>mbooks KafkaMessageProducer</td><td>mbooks KafkaListener (<code>mbooks-movies-group</code>) → WebSocketServer</td><td>Movie catalog changes (broadcast to connected WebSocket clients)</td></tr>
 </table>
-<p>Both WebSocket servers expose <code>@ServerEndpoint("/ws")</code>. Apache proxies WebSocket upgrades at <code>/mbook-1/ws</code> and <code>/mbooks-1/ws</code>.</p>
+<div class="card">
+<h4>Consumer Resilience</h4>
+<p>All three Kafka consumers use <strong>distinct group IDs</strong> per service so that consumers in different services receive all messages independently rather than competing for partitions. Each consumer loop includes:</p>
+<ul>
+  <li><strong>Exponential backoff</strong> on consumer errors — starts at 1 second, doubles on each failure up to 30 seconds, resets on successful poll.</li>
+  <li><strong>Longer poll interval</strong> — 1000ms instead of 100ms to reduce CPU usage during idle periods.</li>
+  <li><strong>Reconnect backoff</strong> — <code>reconnect.backoff.ms=1000</code>, <code>reconnect.backoff.max.ms=30000</code> for broker reconnections.</li>
+  <li><strong>Extended timeouts</strong> — <code>session.timeout.ms=30000</code>, <code>max.poll.interval.ms=600000</code> to handle slow processing gracefully.</li>
+</ul>
+</div>
+<p>Both WebSocket servers expose <code>@ServerEndpoint("/ws")</code>. Apache proxies WebSocket upgrades at <code>/mbook-1/ws</code> and <code>/mbooks-1/ws</code>. WebSocket servers set <code>maxIdleTimeout(0)</code> and handle <code>@OnMessage</code> pong frames; iOS client sends a ping every 30 seconds.</p>
 </section>
 
 <!-- ──────── REGISTRATION & VOUCHER FLOW ──────── -->
@@ -1780,7 +2034,7 @@
   <tr><td>/webapi/myresource/images/venues/{file}</td><td>Venue photos from <code>pictures/venues/</code></td></tr>
   <tr><td>/webapi/myresource/images/profiles/{file}</td><td>Profile pictures from <code>pictures/profiles/</code></td></tr>
 </table>
-<p>Config property <code>pictures.base-dir</code> (env: <code>PICTURES_BASE_DIR</code>) defaults to <code>../pictures</code>. In K8s it's set to <code>/pictures</code> with an emptyDir volume that must be populated after deployment.</p>
+<p>Config property <code>pictures.base-dir</code> (env: <code>PICTURES_BASE_DIR</code>) defaults to <code>../pictures</code>. In K8s it's set to <code>/pictures</code> backed by a <code>pictures-pvc</code> PersistentVolumeClaim (500 Mi). Pictures persist across pod restarts. After first deployment, copy pictures once: <code>tar cf - -C pictures . | kubectl exec -n cinemas -i &lt;pod&gt; -- tar xf - -C /pictures/</code>.</p>
 </section>
 
 <!-- ──────── WEB FRONTEND: OVERVIEW ──────── -->
@@ -1788,6 +2042,7 @@
 <h2>Web Frontend: AngularJS Client</h2>
 <p><span class="badge badge-blue">AngularJS 1.x</span> <span class="badge badge-blue">CryptoJS</span> <span class="badge badge-green">Linear Template</span></p>
 <p>The web UI is a single-page AngularJS 1.x application served as static HTML/JS by dalogin-quarkus. Originally built with the "Linear" responsive template and adapted from WildFly-era JSP pages to static HTML. All pages live in <code>dalogin-quarkus/src/main/resources/META-INF/resources/</code>.</p>
+<p>A second frontend — the <strong>Film-Review Booking UI</strong> — uses the "Film-Review Movie Database" HTML template at <code>/login/film-review/</code> and provides a standalone SPA for the full booking flow (movie browsing → venue → seat selection → Braintree checkout) using <code>angular-route</code> hashbang navigation. See the <a href="#film-review-ui">Film-Review Booking UI</a> section for details.</p>
 
 <h3>Technology Stack</h3>
 <div class="card">
@@ -1957,6 +2212,89 @@
   <tr><td><code>jsR/re-tree/re-tree.min.js</code></td><td>Regex tree utility (device-detector dependency)</td></tr>
 </table>
 <p>CSS, images, and fonts from the original Linear responsive template are also present under <code>css/</code>, <code>images/</code>, and <code>fonts/</code> directories.</p>
+</div>
+</section>
+
+<!-- ──────── FILM-REVIEW BOOKING UI ──────── -->
+<section id="film-review-ui">
+<h2>Film-Review Booking UI</h2>
+<p><span class="badge badge-orange">AngularJS 1.x SPA</span> <span class="badge badge-purple">Film-Review Template</span> <span class="badge badge-green">Braintree Drop-in</span></p>
+<p>A standalone single-page booking interface built with the <strong>Film-Review Movie Database</strong> HTML template. Located at <code>dalogin-quarkus/src/main/resources/META-INF/resources/film-review/</code>, accessible at <code>/login/film-review/</code>. Unlike the original Linear-template UI, this SPA uses <code>angular-route</code> with hashbang navigation (<code>#!/</code>) for a modern browsing → venue → seats → checkout flow — all without page reloads.</p>
+
+<h3>Application Architecture</h3>
+<div class="card">
+<table>
+  <tr><th>File</th><th>Purpose</th></tr>
+  <tr><td><code>index.html</code></td><td>Shell page — Film-Review header/footer, <code>ng-view</code> container, inline seat-map CSS, Braintree Drop-in SDK, CryptoJS imports</td></tr>
+  <tr><td><code>app.js</code></td><td>AngularJS module <code>swiftCinemas</code> — HMAC-SHA512 HTTP interceptor, route config, 4 controllers</td></tr>
+  <tr><td><code>templates/movies.html</code></td><td>Movie grid with search filter — hero banner, poster cards with "Book Now" hover action</td></tr>
+  <tr><td><code>templates/venues.html</code></td><td>Venue/location cards for a selected movie — thumbnail, name, address</td></tr>
+  <tr><td><code>templates/dates.html</code></td><td>Date picker dropdown + interactive seat map with multi-select — screen bar, row labels, seat legend, booking summary</td></tr>
+  <tr><td><code>templates/checkout.html</code></td><td>Braintree Drop-in payment form — order summary, payment nonce submission, success/error messages</td></tr>
+</table>
+</div>
+
+<h3>Route Configuration</h3>
+<div class="card">
+<table>
+  <tr><th>Route</th><th>Template</th><th>Controller</th><th>API Call</th></tr>
+  <tr><td><code>#!/</code></td><td><code>movies.html</code></td><td><code>MoviesController</code></td><td><code>GET /mbooks-1/rest/book/movies</code></td></tr>
+  <tr><td><code>#!/venues-list</code></td><td><code>venues-list.html</code></td><td><code>VenuesListController</code></td><td><code>GET /mbooks-1/rest/book/locations</code></td></tr>
+  <tr><td><code>#!/venue-movies/:locationId</code></td><td><code>venue-movies.html</code></td><td><code>VenueMoviesController</code></td><td><code>GET /mbooks-1/rest/book/venue/movies?locationId=X</code></td></tr>
+  <tr><td><code>#!/venues/:movieId</code></td><td><code>venues.html</code></td><td><code>VenuesController</code></td><td><code>GET /mbooks-1/rest/book/venue/v2/:movieId</code></td></tr>
+  <tr><td><code>#!/dates/:locationId/:movieId</code></td><td><code>dates.html</code></td><td><code>DatesSeatsController</code></td><td><code>GET /mbooks-1/rest/book/dates/:locationId/:movieId</code> + <code>GET /mbooks-1/rest/book/seats/:screeningDateId</code></td></tr>
+  <tr><td><code>#!/checkout</code></td><td><code>checkout.html</code></td><td><code>CheckoutController</code></td><td><code>GET /login/CheckOut</code> (client token) + <code>POST /login/CheckOut</code> (payment)</td></tr>
+  <tr><td><code>#!/purchases</code></td><td><code>purchases.html</code></td><td><code>PurchasesController</code></td><td><code>GET /login/GetAllPurchases</code></td></tr>
+  <tr><td><code>#!/purchases/:purchaseId</code></td><td><code>purchase-detail.html</code></td><td><code>PurchaseDetailController</code></td><td><code>GET /login/ManagePurchases?purchaseId=X</code></td></tr>
+  <tr><td><code>#!/login</code></td><td><code>login.html</code></td><td><code>LoginController</code></td><td><code>POST /login/HelloWorld</code> (HMAC login)</td></tr>
+</table>
+</div>
+
+<h3>HMAC-SHA512 Interceptor</h3>
+<div class="card">
+<p>The <code>app.js</code> HTTP interceptor mirrors the authentication chain from the original <code>script.js</code>:</p>
+<ol>
+  <li><strong>Request interceptor</strong> — Skips signing for the initial <code>/mbooks-1/rest/book/movies</code> call (uses <code>X-Token: client-secret</code> header to obtain an APIKEY). All subsequent requests require <code>localStorage.sessionToken_</code>.</li>
+  <li><strong>Request transformer</strong> — Generates a browser-fingerprint <code>deviceId</code> from <code>navigator</code>/<code>screen</code> properties, computes <code>X-HMAC-HASH = HMAC-SHA512(url:deviceId:microTime, hmacSecret)</code>, sets <code>X-MICRO-TIME</code>, <code>X-Device</code>, and <code>X-Token</code> headers.</li>
+  <li><strong>APIKEY bootstrap</strong> — The <code>MoviesController</code> reads the <code>APIKEY</code> response header from the movies endpoint and stores it in <code>localStorage.sessionToken_</code> for subsequent requests.</li>
+</ol>
+</div>
+
+<h3>Seat Map Interaction</h3>
+<div class="card">
+<p>The <code>DatesSeatsController</code> implements a fully interactive cinema seat map:</p>
+<ul>
+  <li><strong>Date selection</strong> — Dropdown populated from <code>/book/dates/:locationId/:movieId</code>. Selecting a date triggers a seat-map load from <code>/book/seats/:screeningDateId</code>.</li>
+  <li><strong>Seat grid rendering</strong> — Seats are grouped into rows by <code>seatRow</code>, sorted numerically. Each seat button shows its column number and applies CSS classes: <code>.available</code> (green), <code>.selected</code> (yellow), <code>.reserved</code> (grey, disabled).</li>
+  <li><strong>Multi-select</strong> — Clicking an available seat toggles its <code>selected</code> state. The booking summary updates in real-time showing seat count, total price ($10/seat), and a "Proceed to Checkout" button.</li>
+  <li><strong>Checkout handoff</strong> — Selected seat numbers (hyphen-separated with trailing dash, same format as iOS), total amount, and screening date ID are stored in <code>sessionStorage</code> and the route navigates to <code>#!/checkout</code>.</li>
+</ul>
+</div>
+
+<h3>Braintree Checkout</h3>
+<div class="card">
+<p>The <code>CheckoutController</code> integrates Braintree's Drop-in UI (v1.44.1):</p>
+<ol>
+  <li><strong>Client token fetch</strong> — <code>GET /login/CheckOut</code> retrieves a Braintree client token (proxied through dalogin to mbooks). If the user is not logged in, an error message is displayed.</li>
+  <li><strong>Drop-in UI</strong> — <code>braintree.dropin.create()</code> renders a card-entry form inside <code>#dropin-container</code> with custom input styling.</li>
+  <li><strong>Payment submission</strong> — <code>POST /login/CheckOut</code> sends <code>payment_method_nonce</code>, <code>orderId</code> (current time in millis), and <code>seatsToBeReserved</code> (JSON with seat numbers, trailing dash — same format as iOS). On success, the checkout data is cleared from <code>sessionStorage</code>.</li>
+</ol>
+</div>
+
+<h3>Template Assets</h3>
+<div class="card">
+<p>The Film-Review template provides a dark cinema-themed design with the following assets under <code>film-review/</code>:</p>
+<table>
+  <tr><th>Directory</th><th>Content</th></tr>
+  <tr><td><code>css/style.css</code></td><td>Full Film-Review template stylesheet (8 286 lines) — dark theme, movie cards, hero sections, topbar, footer</td></tr>
+  <tr><td><code>css/plugins.css</code></td><td>Bundled CSS plugins — Bootstrap grid, Ionicons, font imports (2 713 lines)</td></tr>
+  <tr><td><code>css/fonts/</code></td><td>Ionicons webfont files</td></tr>
+  <tr><td><code>js/jquery.js</code></td><td>jQuery (template dependency)</td></tr>
+  <tr><td><code>js/plugins.js</code> / <code>plugins2.js</code></td><td>Template JS plugins (sliders, tooltips, etc.)</td></tr>
+  <tr><td><code>js/custom.js</code></td><td>Template custom JS (navigation toggle, back-to-top, etc.)</td></tr>
+  <tr><td><code>images/logo1.png</code></td><td>SwiftCinemas logo (used in header/footer and as fallback poster)</td></tr>
+</table>
+<p>AngularJS and CryptoJS libraries are shared from the existing <code>movies/</code> folder via relative paths (<code>../movies/oldAngular/angular.min.js</code>, <code>../movies/angular/angular-route.min.js</code>, <code>../movies/js/hmac-sha512.js</code>, <code>../movies/js/enc-base64-min.js</code>).</p>
 </div>
 </section>
 
@@ -3038,12 +3376,25 @@ python3 k8infra/test-login-admin.py
 
 <h3>Quarkus Unit Tests</h3>
 <div class="card">
-<p>Minimal smoke-level tests exist under <code>mbooks-quarkus/src/test/java/com/jeet/</code>. These use the <code>@QuarkusTest</code> annotation and RestAssured:</p>
-<ul>
-  <li><code>GreetingResourceTest</code> — verifies <code>GET /mbooks-1/rest/book/hello</code> returns 200</li>
-  <li><code>NativeGreetingResourceIT</code> — native-image variant of the same test</li>
-</ul>
-<p>Tests for other services are not yet written. See the <a href="#refactoring">Refactoring Suggestions</a> section for recommended test additions.</p>
+<p>Each backend service has <code>@QuarkusTest</code> tests under its <code>src/test/java/</code> directory:</p>
+<table>
+  <tr><th>Service</th><th>Test Class</th><th>What It Tests</th></tr>
+  <tr><td><code>dalogin-quarkus</code></td><td><code>LoginFlowTest</code></td><td>7 ordered tests covering HMAC login, bad HMAC, wrong password, missing params, and session-based <code>/admin</code> retrieval. Requires running MySQL with <code>login_</code> schema and (for the admin test) a reachable <code>mbook</code> service.</td></tr>
+  <tr><td><code>mbooks-quarkus</code></td><td><code>GreetingResourceTest</code></td><td>Smoke test — verifies <code>GET /mbooks-1/rest/book/hello</code> returns 200</td></tr>
+  <tr><td><code>mbooks-quarkus</code></td><td><code>GreetingResourceIT</code></td><td>Native-image variant of the greeting test</td></tr>
+  <tr><td><code>simple-service-webapp</code></td><td><code>ImageResourceTest</code></td><td>Verifies health endpoint returns <code>"Got it"</code> and missing images return 404</td></tr>
+</table>
+</div>
+
+<h3>Appium iOS UI Tests</h3>
+<div class="card">
+<p>Automated iOS simulator tests in <code>appium/</code> using Appium 3 + XCUITest driver + TestNG:</p>
+<table>
+  <tr><th>Test Class</th><th>What It Tests</th><th>Run With</th></tr>
+  <tr><td><code>TestNavigations</code></td><td>Full booking flow — Movies → Category → Venue → Seats → Checkout</td><td><code>mvn test -f appium/pom.xml</code></td></tr>
+  <tr><td><code>InspectUI</code></td><td>Dumps page-source XML for UI element debugging</td><td><code>mvn test -f appium/pom.xml -DsuiteXmlFile=testng-inspect.xml</code></td></tr>
+</table>
+<p>Requires a running backend, iOS simulator (iPhone 16 Pro / iOS 26.1 by default), and Appium server. See <code>appium/README.md</code> for full setup. Override simulator with <code>-Dsim.device</code> / <code>-Dsim.version</code>.</p>
 </div>
 
 <h3>Manual Testing Checklist</h3>
@@ -3054,6 +3405,7 @@ python3 k8infra/test-login-admin.py
   <tr><td>Login (API)</td><td>Run <code>python3 k8infra/test-login.py</code></td><td>All 3 steps pass</td></tr>
   <tr><td>Registration</td><td>Open <code>/login/register.html</code> → enter user/email/password → submit</td><td>Account created, activation prompt (if voucher-based)</td></tr>
   <tr><td>Browse movies</td><td>After login, navigate to movies page or call <code>GET /mbooks-1/rest/book/movies</code></td><td>JSON array of movie objects</td></tr>
+  <tr><td>Film-Review UI</td><td>Open <code>https://milo.crabdance.com/login/film-review/</code> → browse movies → select venue → pick date → select seats → checkout</td><td>Full booking flow with dark cinema theme, interactive seat map, Braintree Drop-in payment</td></tr>
   <tr><td>Venue selection</td><td>Call <code>GET /mbooks-1/rest/book/venues/{movieId}</code></td><td>JSON array of venue objects with screening dates</td></tr>
   <tr><td>Seat map</td><td>Call <code>GET /mbooks-1/rest/book/seats/{screenId}</code></td><td>JSON array of seat objects with reservation status</td></tr>
   <tr><td>Checkout</td><td>POST to <code>/mbooks-1/rest/book/payment/fullcheckout2</code> with orderId, seats, nonce</td><td>Payment processed, tickets created</td></tr>
@@ -3100,11 +3452,11 @@ public String getHash(String pass, String user) throws SQLException {
 }</code></pre>
 </div>
 
-<div class="card priority-high">
-<h4>🔴 HIGH — mbooks DAO Singleton: Replace with CDI-Managed Sessions</h4>
+<div class="card priority-medium">
+<h4>🟡 MEDIUM — mbooks DAO Singleton: Session-Per-Call Completed, CDI Migration Pending</h4>
 <p><strong>Where:</strong> <code>mbooks-quarkus DAO.java</code>, <code>HibernateUtil.java</code></p>
-<p><strong>Problem:</strong> <code>DAO.instance()</code> is a hand-rolled singleton that opens a <code>Session</code> once and reuses it forever. This is inherently thread-unsafe, causes stale data, and leaks sessions. All methods are <code>synchronized</code>, serializing all database access to a single thread.</p>
-<p><strong>Fix:</strong> Follow the pattern already used in <code>mbook-quarkus</code> — inject a Quarkus-managed <code>Session</code> into a <code>@RequestScoped</code> DAO. Let the container manage session lifecycle, transactions, and connection pooling.</p>
+<p><strong>Progress:</strong> <span class="badge badge-green">Phase 1 done</span> The static volatile <code>Session</code>, <code>Transaction</code>, <code>Seats</code>, <code>Purchase</code>, and <code>Screen</code> fields have been removed. Every DAO method now opens its own <code>Session</code> via <code>try (Session session = factory.openSession())</code>. Read-only methods are no longer <code>synchronized</code> — concurrent reads proceed without contention. Write methods retain <code>synchronized</code> for mutation safety. The <code>bookTickets()</code> method performs all seat locking, availability checks, ticket creation, and seat updates within a single session with explicit commit/rollback.</p>
+<p><strong>Remaining:</strong> Full CDI migration — make <code>DAO</code> a <code>@RequestScoped</code> bean with injected Quarkus-managed <code>Session</code> (matching the <code>mbook-quarkus</code> pattern). Remove <code>DAO.instance()</code> and <code>HibernateUtil</code>. Preserve all HQL queries and cache annotations.</p>
 </div>
 
 <div class="card priority-high">
@@ -3143,10 +3495,9 @@ public String getHash(String pass, String user) throws SQLException {
 </div>
 
 <div class="card priority-low">
-<h4>🟢 LOW — Persistent Pictures Volume</h4>
+<h4>✅ DONE — Persistent Pictures Volume</h4>
 <p><strong>Where:</strong> <code>quarkus-backend.yaml</code></p>
-<p><strong>Problem:</strong> A <code>pictures-pvc</code> PersistentVolumeClaim (500 Mi) is defined in the manifest but not yet referenced by the <code>simple-service-webapp</code> deployment — it still uses <code>emptyDir</code>, which is lost on every pod restart. Requires manual <code>kubectl cp</code> after each deployment.</p>
-<p><strong>Fix:</strong> Use a PersistentVolumeClaim, or build the pictures into the Docker image, or use a Minikube hostPath mount. A ConfigMap-based init container could also sync from a git-hosted pictures repo.</p>
+<p><strong>Status:</strong> <span class="badge badge-green">Completed</span> The <code>simple-service-webapp</code> deployment now references the <code>pictures-pvc</code> PersistentVolumeClaim instead of <code>emptyDir</code>. Pictures persist across pod restarts. After first deployment, copy pictures once: <code>tar cf - -C pictures . | kubectl exec -n cinemas -i &lt;pod&gt; -- tar xf - -C /pictures/</code>.</p>
 </div>
 
 <div class="card priority-low">
@@ -3157,10 +3508,10 @@ public String getHash(String pass, String user) throws SQLException {
 </div>
 
 <div class="card priority-low">
-<h4>🟢 LOW — Add Tests</h4>
+<h4>🟢 LOW — Expand Test Coverage</h4>
 <p><strong>Where:</strong> All services</p>
-<p><strong>Problem:</strong> Test coverage is minimal. Only two Python integration tests exist. No unit tests for business logic, security filters, or stored procedures.</p>
-<p><strong>Fix:</strong> Add Quarkus <code>@QuarkusTest</code> integration tests for each REST endpoint. Add unit tests for <code>hmac512</code>, <code>AesUtil</code>, <code>TicketService</code>, <code>PaymentService</code>. Add Testcontainers-based tests for stored procedures. The Python tests are a good starting point — expand them to cover registration, booking, and error paths.</p>
+<p><strong>Current:</strong> <code>dalogin</code> has <code>LoginFlowTest</code> (7 ordered HMAC login tests), <code>mbooks</code> has a smoke health-check test, <code>simple-service-webapp</code> has <code>ImageResourceTest</code> (health + 404), two Python integration scripts cover end-to-end API flows, Appium <code>TestNavigations</code> covers the full iOS booking flow.</p>
+<p><strong>Gaps:</strong> No unit tests for <code>AesUtil</code>, <code>TicketService</code>, <code>PaymentService</code>, or security filters. No Testcontainers-based tests for stored procedures. No tests for the booking transaction (seat locking, concurrent reservation, rollback). The Python tests don't cover registration, booking, or error paths. <code>mbook-quarkus</code> has no tests at all.</p>
 </div>
 
 </section>
@@ -3241,7 +3592,8 @@ public String getHash(String pass, String user) throws SQLException {
   <tr><td><strong>Query Cache</strong></td><td>Hibernate's query result cache. Stores the IDs returned by HQL queries. Works in conjunction with the L2 entity cache and timestamps cache for invalidation.</td></tr>
   <tr><td><strong>Pessimistic Write Lock</strong></td><td><code>LockModeType.PESSIMISTIC_WRITE</code> → <code>SELECT ... FOR UPDATE</code>. Used during seat reservation to prevent double-selling. Holds a database-level row lock until the transaction commits or rolls back.</td></tr>
   <tr><td><strong>Braintree</strong></td><td>Payment gateway by PayPal. The system uses Braintree Sandbox for development. <code>PaymentService</code> generates client tokens and processes transactions via the Braintree Java SDK.</td></tr>
-  <tr><td><strong>Linear Template</strong></td><td>The original HTML/CSS responsive template used for the web frontend. Provides layout variants (left-sidebar, right-sidebar, no-sidebar) and a clean design.</td></tr>
+  <tr><td><strong>Linear Template</strong></td><td>The original HTML/CSS responsive template used for the web frontend (login, registration, password reset pages). Provides layout variants (left-sidebar, right-sidebar, no-sidebar) and a clean design.</td></tr>
+  <tr><td><strong>Film-Review Template</strong></td><td>The "Film-Review Movie Database" HTML template used for the standalone booking SPA at <code>/login/film-review/</code>. Dark cinema-themed design with movie card grid, venue cards, seat map, and integrated Braintree checkout.</td></tr>
   <tr><td><strong>login_</strong></td><td>The MySQL database schema for authentication, user, device, token, voucher, and password-reset data. The trailing underscore is intentional — a legacy database named <code>login</code> (without underscore) must <strong>not</strong> exist.</td></tr>
   <tr><td><strong>book</strong></td><td>The MySQL database schema for movies, venues, screens, screening dates, seats, tickets, and purchases.</td></tr>
   <tr><td><strong>Apache Reverse Proxy</strong></td><td>httpd 2.4 running inside Kubernetes that routes HTTP requests to the correct backend service based on URL prefix (<code>/login</code>, <code>/mbook-1</code>, <code>/mbooks-1</code>, <code>/simple-service-webapp</code>). Also handles WebSocket upgrade proxying.</td></tr>
@@ -3259,6 +3611,8 @@ public String getHash(String pass, String user) throws SQLException {
 <h2>Document Version History</h2>
 <table>
   <tr><th>Date</th><th>Version</th><th>Changes</th></tr>
+  <tr><td>March 21, 2026</td><td>1.8</td><td><strong>Payment Workflow Deep-Dive</strong> — new section documenting the end-to-end payment flow: client seat selection → dalogin proxy servlet chain (AuthFilter + ActiveVoucherFilter + CheckOut.java + ServiceClient + RequestFilter) → mbooks security filters (CiphertextFilter + CookieFilter) → BookController.fullcheckout2() → DAO.bookTickets() pessimistic locking → Braintree transaction → rollback scenarios. Covers checkout payload contracts, Braintree SDK versions, success/failure responses, and post-booking operations. <strong>Film-Review checkout fix</strong> — the HMAC <code>transformRequest</code> pushed onto <code>$httpProvider.defaults.transformRequest</code> did not return <code>data</code>, so AngularJS replaced every POST body with <code>undefined</code>; all POST operations (checkout, ticket cancellation, purchase deletion) arrived at the servlet with empty parameters. Fixed by adding <code>return data;</code>. <strong>Braintree Drop-in JS SDK</strong> updated from 1.43.0 to 1.44.1 (latest). <strong>In-app login</strong> — new <code>#!/login</code> route with <code>LoginController</code> and <code>templates/login.html</code> providing SHA3-512 + HMAC-SHA512 login within the Film-Review SPA. <strong>Global auth state</strong> — <code>app.run()</code> manages <code>$rootScope.isLoggedIn</code>/<code>loggedInUser</code> with session probe on startup; header nav shows conditional Login/Log Out links. Updated: checkout description (orderId is timestamp, seats are seat numbers not IDs).</td></tr>
+  <tr><td>March 21, 2026</td><td>1.7</td><td><strong>DAO session-per-call refactoring</strong> — mbooks <code>DAO.java</code> refactored from shared static <code>Session</code> with global <code>synchronized</code> to session-per-call pattern (<code>factory.openSession()</code> in try-with-resources). Read-only methods are no longer synchronized; write methods retain synchronisation. <code>bookTickets()</code> now performs inline seat locking within a single session. Fixed empty HQL in <code>getlocationForVenue()</code>. <strong>Film-Review Booking UI</strong> — new AngularJS SPA at <code>/login/film-review/</code> using the Film-Review Movie Database template. Four-step hashbang-routed flow: movie grid → venue selection → date/seat map with multi-select → Braintree Drop-in checkout. <strong>Kafka consumer resilience</strong> — all three consumers (mbooks-movies, mbook-users, mbook-movies) now use distinct group IDs, exponential backoff on errors (1s–30s), 1000ms poll interval, and extended session/reconnect timeouts. <strong>Pictures PVC</strong> — <code>simple-service-webapp</code> deployment volume changed from <code>emptyDir</code> to <code>persistentVolumeClaim</code> (<code>pictures-pvc</code>); pictures persist across pod restarts. <strong>BookingHandlerImpl</strong> — <code>getLocationForMovie()</code> now creates detached <code>Location</code> copies (without <code>venues</code> list) for clean JSON serialisation. Updated: Hibernate caching deep-dive, concurrency model, realtime/Kafka section, testing inventory, refactoring progress.</td></tr>
   <tr><td>March 20, 2026</td><td>1.6</td><td>Replaced Jaeger with <strong>Grafana Tempo + Grafana</strong> for trace visualisation. Tempo (<code>grafana/tempo:2.7.2</code>) replaces Jaeger as the OTLP trace backend; Grafana (<code>grafana/grafana:11.6.0</code>) replaces the Jaeger UI with richer trace search, node graphs, and service maps. All service OTLP endpoints updated from <code>http://jaeger:*</code> to <code>http://tempo:*</code>. Grafana UI accessible at <code>https://milo.crabdance.com/grafana/</code>. Updated: Kubernetes topology diagram, observability architecture, environment variables, glossary, deploy runbook.</td></tr>
   <tr><td>March 20, 2026</td><td>1.5</td><td>Added: Observability section — OpenTelemetry distributed tracing enabled on all four backend services, Jaeger all-in-one deployment for trace collection and visualization (UI at <code>/jaeger/</code>). Updated: Kubernetes topology diagram (Jaeger pod), environment variables (OTel config per service), glossary (OpenTelemetry, OTLP, Jaeger). OTLP protocol choice documented (gRPC for mbook/mbooks, http/protobuf for dalogin/simple-service-webapp due to OkHttp dependency).</td></tr>
   <tr><td>March 20, 2026</td><td>1.4</td><td>Updated: iOS URL centralisation (<code>URLManager.swift</code> replaces hardcoded <code>serverURL</code>), WebSocket keepalive pings (30s client ping + server idle timeout disabled + <code>@OnError</code>/<code>@OnMessage</code> pong handling), VenuesVC storyboard fix (removed non-existent <code>Venue</code> custom class, restored navigation to VenuesDetailsVC), SessionAttributeListener refactored (removed static mutable state, switched to <code>org.jboss.logging</code>), mbooks deployment liveness/readiness probes, Apache WebSocket proxy rule ordering fix, removed obsolete <code>fix-sprocs.sql</code>/<code>fix-triggers.sql</code> (SQL scripts now self-contained).</td></tr>

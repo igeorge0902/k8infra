@@ -399,7 +399,8 @@ spec:
               mountPath: /pictures
       volumes:
         - name: pictures
-          emptyDir: {}
+          persistentVolumeClaim:
+            claimName: pictures-pvc
 ---
 apiVersion: v1
 kind: Service
