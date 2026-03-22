@@ -260,9 +260,30 @@ python3 k8infra/test-login.py
 
 ## 8) Redeploy after code changes
 
-After editing source, rebuild and reload only the changed service:
+After editing source, rebuild and reload only the changed service.
+
+### Service reference
+
+| Service | Source directory | Image name | K8s deployment name |
+|---------|-----------------|------------|---------------------|
+| dalogin | `dalogin-quarkus/` | `dalogin-quarkus:local` | `dalogin` |
+| mbook | `mbook-quarkus/` | `mbook-quarkus:local` | `mbook` |
+| mbooks | `mbooks-quarkus/` | `mbooks-quarkus:local` | `mbooks` |
+| simple-service-webapp | `simple-service-webapp-quarkus/` | `simple-service-webapp-quarkus:local` | `simple-service-webapp` |
+
+Replace `<dir>`, `<image>`, and `<deployment>` below with values from the table.
 
 **If using `minikube docker-env` (Option A):**
+
+```bash
+eval $(minikube docker-env)
+(cd <dir> && ./mvnw package -DskipTests)
+docker build -t <image>:local ./<dir>
+eval $(minikube docker-env --unset)
+kubectl -n cinemas rollout restart deployment/<deployment>
+```
+
+Example — redeploy `dalogin` after a code change:
 
 ```bash
 eval $(minikube docker-env)
@@ -275,10 +296,52 @@ kubectl -n cinemas rollout restart deployment/dalogin
 **If using Podman (Option B):**
 
 ```bash
-(cd dalogin-quarkus && ./mvnw package -DskipTests)
-podman build -t dalogin-quarkus:local ./dalogin-quarkus
-podman save localhost/dalogin-quarkus:local | minikube image load --daemon=false -
-kubectl -n cinemas rollout restart deployment/dalogin
+(cd <dir> && ./mvnw package -DskipTests)
+podman build -t <image>:local ./<dir>
+podman save localhost/<image>:local | minikube image load --daemon=false -
+kubectl -n cinemas rollout restart deployment/<deployment>
+```
+
+Example — redeploy `mbooks` after a code change:
+
+```bash
+(cd mbooks-quarkus && ./mvnw package -DskipTests)
+podman build -t mbooks-quarkus:local ./mbooks-quarkus
+podman save localhost/mbooks-quarkus:local | minikube image load --daemon=false -
+kubectl -n cinemas rollout restart deployment/mbooks
+```
+
+### Redeploy all four services at once
+
+**Option A (minikube docker-env):**
+
+```bash
+eval $(minikube docker-env)
+for svc in dalogin-quarkus mbook-quarkus mbooks-quarkus simple-service-webapp-quarkus; do
+  (cd "$svc" && ./mvnw package -DskipTests)
+  docker build -t "${svc}:local" "./${svc}"
+done
+eval $(minikube docker-env --unset)
+kubectl -n cinemas rollout restart deployment/dalogin deployment/mbook deployment/mbooks deployment/simple-service-webapp
+```
+
+**Option B (Podman):**
+
+```bash
+for svc in dalogin-quarkus mbook-quarkus mbooks-quarkus simple-service-webapp-quarkus; do
+  (cd "$svc" && ./mvnw package -DskipTests)
+  podman build -t "${svc}:local" "./${svc}"
+  podman save "localhost/${svc}:local" | minikube image load --daemon=false -
+done
+kubectl -n cinemas rollout restart deployment/dalogin deployment/mbook deployment/mbooks deployment/simple-service-webapp
+```
+
+### Verify the rollout
+
+```bash
+kubectl -n cinemas rollout status deployment/<deployment>
+# or watch all pods:
+kubectl -n cinemas get pods -w
 ```
 
 ## Notes specific to this codebase
