@@ -537,6 +537,7 @@ spec:
             - --config.file=/etc/prometheus/prometheus.yml
             - --storage.tsdb.retention.time=7d
             - --web.enable-lifecycle
+            - --web.enable-remote-write-receiver
           ports:
             - containerPort: 9090
           volumeMounts:
@@ -595,8 +596,33 @@ data:
         wal:
           path: /var/tempo/wal
     metrics_generator:
+      registry:
+        external_labels:
+          source: tempo
+      processor:
+        service_graphs:
+          dimensions:
+            - service.name
+          enable_client_server_prefix: true
+          peer_attributes:
+            - service.name
+            - db.system
+            - messaging.system
+        span_metrics:
+          dimensions:
+            - service.name
+            - http.method
+            - http.status_code
       storage:
         path: /var/tempo/metrics
+        remote_write:
+          - url: http://prometheus:9090/api/v1/write
+    overrides:
+      defaults:
+        metrics_generator:
+          processors:
+            - service-graphs
+            - span-metrics
 ---
 apiVersion: apps/v1
 kind: Deployment
@@ -929,7 +955,7 @@ data:
             "name": "DS_PROMETHEUS",
             "type": "datasource",
             "query": "prometheus",
-            "current": { "text": "Prometheus", "value": "Prometheus" }
+            "current": { "text": "Prometheus", "value": "prometheus" }
           }
         ]
       },
@@ -953,6 +979,7 @@ data:
     datasources:
       - name: Prometheus
         type: prometheus
+        uid: prometheus
         access: proxy
         url: http://prometheus:9090
         isDefault: true
@@ -960,6 +987,7 @@ data:
           timeInterval: 15s
       - name: Tempo
         type: tempo
+        uid: tempo
         access: proxy
         url: http://tempo:3200
         isDefault: false
@@ -969,7 +997,7 @@ data:
           nodeGraph:
             enabled: true
           serviceMap:
-            datasourceUid: ''
+            datasourceUid: prometheus
 ---
 apiVersion: apps/v1
 kind: Deployment
