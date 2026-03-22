@@ -59,6 +59,17 @@ spec:
               mountPath: /var/lib/mysql
             - name: mysql-init
               mountPath: /docker-entrypoint-initdb.d
+        - name: mysqld-exporter
+          image: prom/mysqld-exporter:v0.16.0
+          args:
+            - --mysqld.address=localhost:3306
+            - --mysqld.username=root
+          env:
+            - name: MYSQLD_EXPORTER_PASSWORD
+              value: rootpw
+          ports:
+            - containerPort: 9104
+              name: metrics
       volumes:
         - name: mysql-data
           emptyDir: {}
@@ -75,8 +86,12 @@ spec:
   selector:
     app: mysql
   ports:
-    - port: 3306
+    - name: mysql
+      port: 3306
       targetPort: 3306
+    - name: metrics
+      port: 9104
+      targetPort: 9104
 ---
 apiVersion: apps/v1
 kind: Deployment
@@ -467,6 +482,93 @@ spec:
   selector:
     app: apache
 ---
+# ===================== prometheus =====================
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: prometheus-config
+  namespace: cinemas
+data:
+  prometheus.yml: |
+    global:
+      scrape_interval: 15s
+      evaluation_interval: 15s
+    scrape_configs:
+      - job_name: 'dalogin'
+        metrics_path: /q/metrics
+        static_configs:
+          - targets: ['dalogin:8080']
+      - job_name: 'mbook'
+        metrics_path: /q/metrics
+        static_configs:
+          - targets: ['mbook:8888']
+      - job_name: 'mbooks'
+        metrics_path: /q/metrics
+        static_configs:
+          - targets: ['mbooks:8080']
+      - job_name: 'simple-service-webapp'
+        metrics_path: /q/metrics
+        static_configs:
+          - targets: ['simple-service-webapp:8085']
+      - job_name: 'mysql'
+        static_configs:
+          - targets: ['mysql:9104']
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: prometheus
+  namespace: cinemas
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: prometheus
+  template:
+    metadata:
+      labels:
+        app: prometheus
+    spec:
+      containers:
+        - name: prometheus
+          image: prom/prometheus:v3.2.1
+          imagePullPolicy: IfNotPresent
+          args:
+            - --config.file=/etc/prometheus/prometheus.yml
+            - --storage.tsdb.retention.time=7d
+            - --web.enable-lifecycle
+          ports:
+            - containerPort: 9090
+          volumeMounts:
+            - name: prometheus-config
+              mountPath: /etc/prometheus
+            - name: prometheus-data
+              mountPath: /prometheus
+          readinessProbe:
+            httpGet:
+              path: /-/ready
+              port: 9090
+            initialDelaySeconds: 10
+            periodSeconds: 5
+      volumes:
+        - name: prometheus-config
+          configMap:
+            name: prometheus-config
+        - name: prometheus-data
+          emptyDir: {}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: prometheus
+  namespace: cinemas
+spec:
+  selector:
+    app: prometheus
+  ports:
+    - port: 9090
+      targetPort: 9090
+---
 # ===================== tempo (trace backend) =====================
 apiVersion: v1
 kind: ConfigMap
@@ -560,6 +662,285 @@ spec:
       port: 4318
       targetPort: 4318
 ---
+# ===================== grafana dashboard provisioning =====================
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: grafana-dashboard-provider
+  namespace: cinemas
+data:
+  dashboards.yaml: |
+    apiVersion: 1
+    providers:
+      - name: cinemas
+        type: file
+        disableDeletion: false
+        updateIntervalSeconds: 30
+        options:
+          path: /var/lib/grafana/dashboards
+          foldersFromFilesStructure: false
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: grafana-dashboards
+  namespace: cinemas
+data:
+  cinemas-overview.json: |
+    {
+      "annotations": { "list": [] },
+      "editable": true,
+      "fiscalYearStartMonth": 0,
+      "graphTooltip": 1,
+      "links": [],
+      "panels": [
+        {
+          "title": "HTTP Request Rate (req/s)",
+          "type": "timeseries",
+          "gridPos": { "h": 8, "w": 12, "x": 0, "y": 0 },
+          "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+          "targets": [
+            {
+              "expr": "sum(rate(http_server_requests_seconds_count[1m])) by (job)",
+              "legendFormat": "{{job}}"
+            }
+          ],
+          "fieldConfig": {
+            "defaults": {
+              "unit": "reqps",
+              "custom": { "drawStyle": "line", "fillOpacity": 15, "pointSize": 5, "lineWidth": 2 }
+            },
+            "overrides": []
+          }
+        },
+        {
+          "title": "HTTP Latency p95 (ms)",
+          "type": "timeseries",
+          "gridPos": { "h": 8, "w": 12, "x": 12, "y": 0 },
+          "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+          "targets": [
+            {
+              "expr": "histogram_quantile(0.95, sum(rate(http_server_requests_seconds_bucket[5m])) by (le, job))",
+              "legendFormat": "{{job}} p95"
+            }
+          ],
+          "fieldConfig": {
+            "defaults": {
+              "unit": "s",
+              "custom": { "drawStyle": "line", "fillOpacity": 10, "lineWidth": 2 }
+            },
+            "overrides": []
+          }
+        },
+        {
+          "title": "HTTP Errors (5xx / min)",
+          "type": "timeseries",
+          "gridPos": { "h": 8, "w": 12, "x": 0, "y": 8 },
+          "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+          "targets": [
+            {
+              "expr": "sum(rate(http_server_requests_seconds_count{status=~\"5..\"}[1m])) by (job)",
+              "legendFormat": "{{job}}"
+            }
+          ],
+          "fieldConfig": {
+            "defaults": {
+              "unit": "reqps",
+              "custom": { "drawStyle": "bars", "fillOpacity": 40, "lineWidth": 1 }
+            },
+            "overrides": []
+          }
+        },
+        {
+          "title": "JVM Heap Used (MB)",
+          "type": "timeseries",
+          "gridPos": { "h": 8, "w": 12, "x": 12, "y": 8 },
+          "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+          "targets": [
+            {
+              "expr": "jvm_memory_used_bytes{area=\"heap\"} / 1024 / 1024",
+              "legendFormat": "{{job}}"
+            }
+          ],
+          "fieldConfig": {
+            "defaults": {
+              "unit": "decmbytes",
+              "custom": { "drawStyle": "line", "fillOpacity": 20, "lineWidth": 2 }
+            },
+            "overrides": []
+          }
+        },
+        {
+          "title": "JVM Threads",
+          "type": "timeseries",
+          "gridPos": { "h": 8, "w": 12, "x": 0, "y": 16 },
+          "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+          "targets": [
+            {
+              "expr": "jvm_threads_live_threads",
+              "legendFormat": "{{job}} live"
+            },
+            {
+              "expr": "jvm_threads_daemon_threads",
+              "legendFormat": "{{job}} daemon"
+            }
+          ],
+          "fieldConfig": {
+            "defaults": {
+              "custom": { "drawStyle": "line", "fillOpacity": 10, "lineWidth": 1 }
+            },
+            "overrides": []
+          }
+        },
+        {
+          "title": "JVM GC Pause (s/min)",
+          "type": "timeseries",
+          "gridPos": { "h": 8, "w": 12, "x": 12, "y": 16 },
+          "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+          "targets": [
+            {
+              "expr": "rate(jvm_gc_pause_seconds_sum[1m])",
+              "legendFormat": "{{job}} {{cause}}"
+            }
+          ],
+          "fieldConfig": {
+            "defaults": {
+              "unit": "s",
+              "custom": { "drawStyle": "line", "fillOpacity": 15, "lineWidth": 1 }
+            },
+            "overrides": []
+          }
+        },
+        {
+          "title": "MySQL Queries per Second",
+          "type": "timeseries",
+          "gridPos": { "h": 8, "w": 12, "x": 0, "y": 24 },
+          "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+          "targets": [
+            {
+              "expr": "rate(mysql_global_status_queries[1m])",
+              "legendFormat": "queries/s"
+            }
+          ],
+          "fieldConfig": {
+            "defaults": {
+              "unit": "ops",
+              "custom": { "drawStyle": "line", "fillOpacity": 20, "lineWidth": 2 }
+            },
+            "overrides": []
+          }
+        },
+        {
+          "title": "MySQL Connections",
+          "type": "timeseries",
+          "gridPos": { "h": 8, "w": 12, "x": 12, "y": 24 },
+          "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+          "targets": [
+            {
+              "expr": "mysql_global_status_threads_connected",
+              "legendFormat": "connected"
+            },
+            {
+              "expr": "mysql_global_status_threads_running",
+              "legendFormat": "running"
+            },
+            {
+              "expr": "mysql_global_variables_max_connections",
+              "legendFormat": "max_connections"
+            }
+          ],
+          "fieldConfig": {
+            "defaults": {
+              "custom": { "drawStyle": "line", "fillOpacity": 10, "lineWidth": 2 }
+            },
+            "overrides": []
+          }
+        },
+        {
+          "title": "MySQL Slow Queries",
+          "type": "stat",
+          "gridPos": { "h": 4, "w": 6, "x": 0, "y": 32 },
+          "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+          "targets": [
+            {
+              "expr": "mysql_global_status_slow_queries",
+              "legendFormat": "total"
+            }
+          ],
+          "fieldConfig": {
+            "defaults": { "unit": "short" },
+            "overrides": []
+          }
+        },
+        {
+          "title": "MySQL Uptime",
+          "type": "stat",
+          "gridPos": { "h": 4, "w": 6, "x": 6, "y": 32 },
+          "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+          "targets": [
+            {
+              "expr": "mysql_global_status_uptime",
+              "legendFormat": "uptime"
+            }
+          ],
+          "fieldConfig": {
+            "defaults": { "unit": "s" },
+            "overrides": []
+          }
+        },
+        {
+          "title": "MySQL InnoDB Buffer Pool Hit Rate",
+          "type": "gauge",
+          "gridPos": { "h": 4, "w": 6, "x": 12, "y": 32 },
+          "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+          "targets": [
+            {
+              "expr": "1 - (rate(mysql_global_status_innodb_buffer_pool_reads[5m]) / (rate(mysql_global_status_innodb_buffer_pool_read_requests[5m]) > 0))",
+              "legendFormat": "hit rate"
+            }
+          ],
+          "fieldConfig": {
+            "defaults": { "unit": "percentunit", "min": 0, "max": 1, "thresholds": { "steps": [{"color":"red","value":null},{"color":"yellow","value":0.9},{"color":"green","value":0.95}] } },
+            "overrides": []
+          }
+        },
+        {
+          "title": "MySQL Open Tables",
+          "type": "stat",
+          "gridPos": { "h": 4, "w": 6, "x": 18, "y": 32 },
+          "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+          "targets": [
+            {
+              "expr": "mysql_global_status_open_tables",
+              "legendFormat": "open"
+            }
+          ],
+          "fieldConfig": {
+            "defaults": { "unit": "short" },
+            "overrides": []
+          }
+        }
+      ],
+      "schemaVersion": 39,
+      "tags": ["cinemas", "quarkus", "mysql"],
+      "templating": {
+        "list": [
+          {
+            "name": "DS_PROMETHEUS",
+            "type": "datasource",
+            "query": "prometheus",
+            "current": { "text": "Prometheus", "value": "Prometheus" }
+          }
+        ]
+      },
+      "time": { "from": "now-1h", "to": "now" },
+      "timepicker": {},
+      "timezone": "browser",
+      "title": "Cinemas — Overview",
+      "uid": "cinemas-overview",
+      "version": 1
+    }
+---
 # ===================== grafana (observability UI) =====================
 apiVersion: v1
 kind: ConfigMap
@@ -570,11 +951,18 @@ data:
   datasources.yaml: |
     apiVersion: 1
     datasources:
+      - name: Prometheus
+        type: prometheus
+        access: proxy
+        url: http://prometheus:9090
+        isDefault: true
+        jsonData:
+          timeInterval: 15s
       - name: Tempo
         type: tempo
         access: proxy
         url: http://tempo:3200
-        isDefault: true
+        isDefault: false
         jsonData:
           tracesToLogsV2:
             datasourceUid: ''
@@ -620,6 +1008,10 @@ spec:
           volumeMounts:
             - name: grafana-datasources
               mountPath: /etc/grafana/provisioning/datasources
+            - name: grafana-dashboard-provider
+              mountPath: /etc/grafana/provisioning/dashboards
+            - name: grafana-dashboards
+              mountPath: /var/lib/grafana/dashboards
           readinessProbe:
             httpGet:
               path: /grafana/api/health
@@ -630,6 +1022,12 @@ spec:
         - name: grafana-datasources
           configMap:
             name: grafana-datasources
+        - name: grafana-dashboard-provider
+          configMap:
+            name: grafana-dashboard-provider
+        - name: grafana-dashboards
+          configMap:
+            name: grafana-dashboards
 ---
 apiVersion: v1
 kind: Service
