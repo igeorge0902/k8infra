@@ -495,19 +495,19 @@ data:
       evaluation_interval: 15s
     scrape_configs:
       - job_name: 'dalogin'
-        metrics_path: /q/metrics
+        metrics_path: /login/q/metrics
         static_configs:
           - targets: ['dalogin:8080']
       - job_name: 'mbook'
-        metrics_path: /q/metrics
+        metrics_path: /mbook-1/q/metrics
         static_configs:
           - targets: ['mbook:8888']
       - job_name: 'mbooks'
-        metrics_path: /q/metrics
+        metrics_path: /mbooks-1/q/metrics
         static_configs:
           - targets: ['mbooks:8080']
       - job_name: 'simple-service-webapp'
-        metrics_path: /q/metrics
+        metrics_path: /simple-service-webapp/q/metrics
         static_configs:
           - targets: ['simple-service-webapp:8085']
       - job_name: 'mysql'
@@ -714,14 +714,14 @@ data:
           }
         },
         {
-          "title": "HTTP Latency p95 (ms)",
+          "title": "HTTP Avg Latency (s)",
           "type": "timeseries",
           "gridPos": { "h": 8, "w": 12, "x": 12, "y": 0 },
           "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
           "targets": [
             {
-              "expr": "histogram_quantile(0.95, sum(rate(http_server_requests_seconds_bucket[5m])) by (le, job))",
-              "legendFormat": "{{job}} p95"
+              "expr": "rate(http_server_requests_seconds_sum[5m]) / rate(http_server_requests_seconds_count[5m])",
+              "legendFormat": "{{job}} avg"
             }
           ],
           "fieldConfig": {
