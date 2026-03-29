@@ -200,6 +200,56 @@ data:
     ProxyPreserveHost On
     ProxyRequests Off
 
+    # ── Security headers ──
+    # Replaces the old WildFly-era mod_headers block.
+    # CORSFilter.java in dalogin is NOT registered (no @WebFilter, not in web.xml),
+    # so all CORS and security headers are handled here at the reverse-proxy layer.
+    <IfModule mod_headers.c>
+        # Hide server identity
+        Header unset X-Powered-By
+        Header unset Server
+
+        # HSTS — force HTTPS for all subdomains, with preload eligibility
+        Header always set Strict-Transport-Security "max-age=31536000; includeSubDomains; preload"
+
+        # Clickjacking protection (X-Frame-Options for legacy browsers, CSP frame-ancestors is primary)
+        Header always set X-Frame-Options "SAMEORIGIN"
+
+        # Disable deprecated XSS auditor — rely on CSP instead
+        # (X-XSS-Protection "1;mode=block" can introduce vulnerabilities in older browsers)
+        Header always set X-XSS-Protection "0"
+
+        # Prevent MIME-type sniffing
+        Header always set X-Content-Type-Options "nosniff"
+
+        # Referrer policy — send origin on cross-origin, full URL on same-origin
+        Header always set Referrer-Policy "strict-origin-when-cross-origin"
+
+        # Restrict browser features not used by this application
+        # payment=(self) allows Braintree Drop-in to function
+        Header always set Permissions-Policy "camera=(), microphone=(), geolocation=(), payment=(self)"
+
+        # Content Security Policy — tailored to the actual resources loaded:
+        #   script-src:  self + Braintree Drop-in JS SDK (js.braintreegateway.com, assets.braintreegateway.com)
+        #   style-src:   self + 'unsafe-inline' (inline <style> in film-review/index.html) + Google Fonts CSS
+        #   font-src:    self + Google Fonts files (fonts.gstatic.com)
+        #   img-src:     self + milo.crabdance.com (simple-service-webapp pictures) + data: URIs
+        #   connect-src: self + milo.crabdance.com (API) + wss: (WebSocket) + Braintree API endpoints
+        #   frame-src:   Braintree card input iframes + PayPal
+        #   frame-ancestors: self only (replaces X-Frame-Options for CSP-aware browsers)
+        Header always set Content-Security-Policy "default-src 'self'; script-src 'self' https://js.braintreegateway.com https://assets.braintreegateway.com; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; img-src 'self' https://milo.crabdance.com data:; connect-src 'self' https://milo.crabdance.com wss://milo.crabdance.com https://api.braintreegateway.com https://client-analytics.braintreegateway.com https://payments.braintree-api.com; frame-src https://assets.braintreegateway.com https://*.paypal.com; frame-ancestors 'self'"
+
+        # CORS — single origin (iOS app and web UI both go through milo.crabdance.com)
+        # X-Token is the session/APIKEY header used by the HMAC interceptor in film-review/app.js
+        # X-HMAC-HASH, X-MICRO-TIME, X-Device are set by the HMAC transformRequest
+        Header always set Access-Control-Allow-Origin "https://milo.crabdance.com"
+        Header always set Access-Control-Expose-Headers "X-Token, APIKEY"
+        Header always set Access-Control-Max-Age "1800"
+        Header always set Access-Control-Allow-Headers "Content-Type, Accept, Authorization, Origin, X-Requested-With, X-Token, X-HMAC-HASH, X-MICRO-TIME, X-Device, Accept-Encoding"
+        Header always set Access-Control-Allow-Methods "GET, POST, OPTIONS, DELETE, PUT"
+    </IfModule>
+
+    # ── Proxy routes ──
     # WebSocket routes MUST appear before their parent HTTP routes
     # (Apache mod_proxy is first-match; /mbook-1 would swallow /mbook-1/ws)
     ProxyPass /mbook-1/ws ws://mbook:8888/mbook-1/ws
@@ -456,6 +506,7 @@ spec:
               sed -i 's/^#LoadModule proxy_module /LoadModule proxy_module /' /usr/local/apache2/conf/httpd.conf
               sed -i 's/^#LoadModule proxy_http_module /LoadModule proxy_http_module /' /usr/local/apache2/conf/httpd.conf
               sed -i 's/^#LoadModule proxy_wstunnel_module /LoadModule proxy_wstunnel_module /' /usr/local/apache2/conf/httpd.conf
+              sed -i 's/^#LoadModule headers_module /LoadModule headers_module /' /usr/local/apache2/conf/httpd.conf
               printf '\nInclude conf/extra/proxy.conf\n' >> /usr/local/apache2/conf/httpd.conf
               httpd-foreground
           ports:

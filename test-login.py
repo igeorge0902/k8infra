@@ -114,17 +114,63 @@ except urllib.error.HTTPError as e:
     body2 = e.read().decode()[:500]
     print(f"  Body   : {body2}")
 
-# ── Step 3: Smoke-test mbooks ────────────────────────────────────
+# ── Step 3: Active sessions ───────────────────────────────────────
 print()
 print("=" * 60)
-print("STEP 3 — GET /mbooks-1/rest/book/hello")
+print("STEP 3 — GET /login/activeSessions (active user sessions)")
 print("=" * 60)
 
-req3 = urllib.request.Request(f"{BASE}/mbooks-1/rest/book/hello")
+req3 = urllib.request.Request(f"{BASE}/login/activeSessions")
 try:
     resp3 = opener.open(req3)
-    print(f"  Status : {resp3.status}")
-    print(f"  Body   : {resp3.read().decode()[:500]}")
+    status3 = resp3.status
+    body3 = resp3.read().decode()
+except urllib.error.HTTPError as e:
+    status3 = e.code
+    body3 = e.read().decode()
+
+print(f"  Status : {status3}")
+print(f"  Body   : {body3[:800]}")
+
+if status3 == 200:
+    try:
+        sessions = json.loads(body3)
+        assert isinstance(sessions, list), "Response must be a JSON array"
+        print(f"  Count  : {len(sessions)} active session(s)")
+
+        # Find our session in the list
+        our_session = None
+        for s in sessions:
+            if s.get("user") == USER and s.get("deviceId") == DEVICE_ID:
+                our_session = s
+                break
+
+        if our_session:
+            print(f"  ✅ Found our session: user={our_session['user']}, "
+                  f"deviceId={our_session['deviceId']}, "
+                  f"sessionId={our_session.get('sessionId', '?')}")
+            assert our_session.get("sessionId"), "Session must have a sessionId"
+            assert our_session.get("creationTime", 0) > 0, "Session must have a creationTime"
+        else:
+            print(f"  ⚠️  Our session (user={USER}, deviceId={DEVICE_ID}) not found in active sessions")
+            print(f"  Sessions: {json.dumps(sessions, indent=2)}")
+
+    except (json.JSONDecodeError, AssertionError) as e:
+        print(f"  ❌ Validation failed: {e}")
+else:
+    print(f"  ❌ Active sessions call failed with status {status3}")
+
+# ── Step 4: Smoke-test mbooks ────────────────────────────────────
+print()
+print("=" * 60)
+print("STEP 4 — GET /mbooks-1/rest/book/hello")
+print("=" * 60)
+
+req4 = urllib.request.Request(f"{BASE}/mbooks-1/rest/book/hello")
+try:
+    resp4 = opener.open(req4)
+    print(f"  Status : {resp4.status}")
+    print(f"  Body   : {resp4.read().decode()[:500]}")
 except urllib.error.HTTPError as e:
     print(f"  Status : {e.code}")
     print(f"  Body   : {e.read().decode()[:500]}")

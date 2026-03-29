@@ -133,6 +133,123 @@ kubectl -n cinemas exec deploy/mysql -- mysql -uroot -prootpw \
 # → users 5, movies 103
 ```
 
+## 4a) Restore from an external MySQL master (optional)
+
+The K8s MySQL pod is a **fully read-write, independent clone** — not a read-only
+replica. You can restore production data from an external master whenever you
+want, then continue making local writes (bookings, test users, etc.) without
+affecting the master.
+
+### Dump from the external master
+
+From a machine that can reach the master:
+
+```bash
+mysqldump -h <master-host> -u root -p \
+  --databases login_ book \
+  --routines --triggers --events \
+  --single-transaction \
+  --set-gtid-purged=OFF \
+  > master-dump.sql
+```
+
+> `--single-transaction` takes a consistent InnoDB snapshot without table locks.
+> `--set-gtid-purged=OFF` prevents GTID errors when importing into an unrelated server.
+> `--routines --triggers --events` includes stored procedures, triggers, and scheduled events.
+
+### Import into the K8s MySQL pod
+
+```bash
+# Drop and recreate to get a clean slate
+kubectl -n cinemas exec -i deploy/mysql -- mysql -uroot -prootpw \
+  -e "DROP DATABASE IF EXISTS login_; DROP DATABASE IF EXISTS book;"
+
+# Import the dump
+kubectl -n cinemas exec -i deploy/mysql -- mysql -uroot -prootpw < master-dump.sql
+
+# Re-grant privileges (the dump may not include user grants)
+kubectl -n cinemas exec -i deploy/mysql -- mysql -uroot -prootpw \
+  -e "CREATE USER IF NOT EXISTS 'sqluser'@'%' IDENTIFIED BY 'sqluserpw';
+      GRANT ALL PRIVILEGES ON login_.* TO 'sqluser'@'%';
+      GRANT ALL PRIVILEGES ON book.* TO 'sqluser'@'%';
+      FLUSH PRIVILEGES;"
+```
+
+### Or just use the repo SQL files
+
+If you don't have access to the external master, the repo SQL dumps are the
+canonical seed data source:
+
+```bash
+kubectl -n cinemas exec -i deploy/mysql -- mysql -uroot -prootpw < mysql_8/login.sql
+kubectl -n cinemas exec -i deploy/mysql -- mysql -uroot -prootpw < mysql_8/book.sql
+```
+
+### Persisting data across pod restarts
+
+By default, the MySQL deployment uses `emptyDir: {}` — **data is lost on every
+pod restart**. This is fine for ephemeral development (just re-import), but if
+you want data to survive pod restarts, switch to a PVC:
+
+```yaml
+# In quarkus-backend.yaml, replace the mysql volumes section:
+      volumes:
+        - name: mysql-data
+          persistentVolumeClaim:
+            claimName: mysql-pvc
+```
+
+And add the PVC (alongside the existing `pictures-pvc`):
+
+```yaml
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: mysql-pvc
+  namespace: cinemas
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 2Gi
+```
+
+> **Note:** With a PVC, data survives `kubectl rollout restart` and pod crashes,
+> but NOT `minikube delete`. The PVC is tied to the Minikube cluster.
+
+### Re-sync workflow (restore from master again)
+
+When you want to reset the K8s database back to the master's state:
+
+```bash
+# 1. Take a fresh dump from the master
+mysqldump -h <master-host> -u root -p \
+  --databases login_ book \
+  --routines --triggers --events \
+  --single-transaction --set-gtid-purged=OFF \
+  > master-dump.sql
+
+# 2. Drop everything and re-import
+kubectl -n cinemas exec -i deploy/mysql -- mysql -uroot -prootpw \
+  -e "DROP DATABASE IF EXISTS login_; DROP DATABASE IF EXISTS book;"
+kubectl -n cinemas exec -i deploy/mysql -- mysql -uroot -prootpw < master-dump.sql
+kubectl -n cinemas exec -i deploy/mysql -- mysql -uroot -prootpw \
+  -e "CREATE USER IF NOT EXISTS 'sqluser'@'%' IDENTIFIED BY 'sqluserpw';
+      GRANT ALL PRIVILEGES ON login_.* TO 'sqluser'@'%';
+      GRANT ALL PRIVILEGES ON book.* TO 'sqluser'@'%';
+      FLUSH PRIVILEGES;"
+
+# 3. Restart services to clear Hibernate L2 cache and connection pools
+kubectl -n cinemas rollout restart deployment/dalogin deployment/mbook deployment/mbooks
+```
+
+> **Why restart services?** Hibernate's L2 cache (Infinispan) in `mbook` and
+> `mbooks` caches Movie, Venue, Location, and Ticket entities. After a full
+> database re-import, cached entity IDs may be stale. Restarting clears the
+> cache. Alternatively, you can wait for the cache TTL to expire (configured in
+> `infinispan-configs-local.xml`).
+
 ## 4b) Populate pictures volume
 
 The `simple-service-webapp` pod serves images from a PVC.

@@ -132,10 +132,62 @@ elif status2 == 300:
 else:
     print(f"\n  ❌ Admin call failed with status {status2}")
 
-# ── Step 3: Smoke-test mbooks ────────────────────────────────────
+# ── Step 3: Active sessions ───────────────────────────────────────
 print()
 print("=" * 60)
-print("STEP 3 — GET /mbooks-1/rest/book/hello (smoke test)")
+print("STEP 3 — GET /login/activeSessions (active user sessions)")
+print("=" * 60)
+
+req_sessions = urllib.request.Request(f"{BASE}/login/activeSessions")
+try:
+    resp_sessions = opener.open(req_sessions)
+    status_sessions = resp_sessions.status
+    body_sessions = resp_sessions.read().decode()
+except urllib.error.HTTPError as e:
+    status_sessions = e.code
+    body_sessions = e.read().decode()
+
+print(f"  Status : {status_sessions}")
+print(f"  Body   : {body_sessions[:800]}")
+
+if status_sessions == 200:
+    try:
+        sessions = json.loads(body_sessions)
+        assert isinstance(sessions, list), "Response must be a JSON array"
+        print(f"  Count  : {len(sessions)} active session(s)")
+
+        # Each session entry must have the expected fields
+        for s in sessions:
+            for field in ("id", "sessionId", "user", "deviceId", "creationTime"):
+                assert field in s, f"Session entry missing field '{field}': {s}"
+
+        # Find our session in the list
+        our_session = None
+        for s in sessions:
+            if s.get("user") == USER and s.get("deviceId") == DEVICE_ID:
+                our_session = s
+                break
+
+        if our_session:
+            print(f"  ✅ Found our session: user={our_session['user']}, "
+                  f"deviceId={our_session['deviceId']}, "
+                  f"sessionId={our_session.get('sessionId', '?')}, "
+                  f"creationTime={our_session.get('creationTime', 0)}")
+            assert our_session["sessionId"], "sessionId must not be empty"
+            assert our_session["creationTime"] > 0, "creationTime must be > 0"
+        else:
+            print(f"  ⚠️  Our session (user={USER}, deviceId={DEVICE_ID}) not found")
+            print(f"  All sessions: {json.dumps(sessions, indent=2)}")
+
+    except (json.JSONDecodeError, AssertionError) as e:
+        print(f"  ❌ Validation failed: {e}")
+else:
+    print(f"  ❌ Active sessions call failed with status {status_sessions}")
+
+# ── Step 4: Smoke-test mbooks ────────────────────────────────────
+print()
+print("=" * 60)
+print("STEP 4 — GET /mbooks-1/rest/book/hello (smoke test)")
 print("=" * 60)
 
 req3 = urllib.request.Request(f"{BASE}/mbooks-1/rest/book/hello")
