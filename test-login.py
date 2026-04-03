@@ -163,10 +163,10 @@ else:
 # ── Step 4: Smoke-test mbooks ────────────────────────────────────
 print()
 print("=" * 60)
-print("STEP 4 — GET /mbooks-1/rest/book/hello")
+print("STEP 4 — GET /mbooks-1/rest/book/locations")
 print("=" * 60)
 
-req4 = urllib.request.Request(f"{BASE}/mbooks-1/rest/book/hello")
+req4 = urllib.request.Request(f"{BASE}/mbooks-1/rest/book/locations")
 try:
     resp4 = opener.open(req4)
     print(f"  Status : {resp4.status}")
