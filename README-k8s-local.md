@@ -464,6 +464,8 @@ kubectl -n cinemas get pods -w
 ## Notes specific to this codebase
 
 - All external backend traffic goes through an in-cluster Apache reverse proxy service (`apache`) that fronts `/login`, `/mbook-1`, `/mbooks-1`, and `/simple-service-webapp`.
+- Film-review Angular routing uses plain hash routes (`#/...`), not hashbang (`#!/...`). Canonical URL example: `https://milo.crabdance.com/login/film-review/#/venues-list`.
+- Legacy login/register Angular scripts are served from `/login/film-review/jsR/...` (filesystem: `dalogin-quarkus/src/main/resources/META-INF/resources/film-review/jsR/`).
 - **Apache proxy rule ordering matters.** In `proxy.conf`, WebSocket routes (`/mbook-1/ws`, `/mbooks-1/ws`) must appear **before** their parent HTTP routes (`/mbook-1`, `/mbooks-1`). Apache `mod_proxy` is first-match — if the HTTP route comes first it swallows WebSocket upgrade requests and the iOS client gets `Socket is not connected`.
 - `dalogin` expects one backend base URL (`WILDFLY_URL`) for both `/mbook-1` and `/mbooks-1`; it is pointed to the Apache service (`http://apache`, port 80).
 - MySQL runs with `--lower-case-table-names=1` so that Hibernate entity names (lowercase) match the dump's mixed-case table names.
