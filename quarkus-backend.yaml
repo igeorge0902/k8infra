@@ -237,7 +237,7 @@ data:
         #   connect-src: self + milo.crabdance.com (API) + wss: (WebSocket) + Braintree API endpoints
         #   frame-src:   Braintree card input iframes + PayPal
         #   frame-ancestors: self only (replaces X-Frame-Options for CSP-aware browsers)
-        Header always set Content-Security-Policy "default-src 'self'; script-src 'self' https://js.braintreegateway.com https://assets.braintreegateway.com; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; img-src 'self' https://milo.crabdance.com data:; connect-src 'self' https://milo.crabdance.com wss://milo.crabdance.com https://api.braintreegateway.com https://client-analytics.braintreegateway.com https://payments.braintree-api.com; frame-src https://assets.braintreegateway.com https://*.paypal.com; frame-ancestors 'self'"
+        Header always set Content-Security-Policy "default-src 'self'; script-src 'self' https://js.braintreegateway.com https://assets.braintreegateway.com; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com https://cdnjs.cloudflare.com; font-src 'self' https://fonts.gstatic.com https://cdnjs.cloudflare.com; img-src 'self' https://milo.crabdance.com data:; connect-src 'self' https://milo.crabdance.com wss://milo.crabdance.com https://api.braintreegateway.com https://client-analytics.braintreegateway.com https://payments.braintree-api.com; frame-src https://assets.braintreegateway.com https://*.paypal.com; frame-ancestors 'self'"
 
         # CORS — single origin (iOS app and web UI both go through milo.crabdance.com)
         # X-Token is the session/APIKEY header used by the HMAC interceptor in film-review/app.js
