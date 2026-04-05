@@ -4,6 +4,10 @@ metadata:
   name: cinemas
 ---
 # ===================== pictures PVC =====================
+# Stores movie posters, venue photos, and profile pictures served by simple-service-webapp.
+# Content survives pod restarts. Populate once after first deploy:
+#   kubectl -n cinemas cp pictures/ <simple-service-webapp-pod>:/pictures/
+# Or use: tar cf - -C pictures . | kubectl exec -n cinemas -i <pod> -- tar xf - -C /pictures/
 apiVersion: v1
 kind: PersistentVolumeClaim
 metadata:
@@ -15,6 +19,24 @@ spec:
   resources:
     requests:
       storage: 500Mi
+---
+# ===================== mysql PVC =====================
+# Stores MySQL data files (/var/lib/mysql) so database content survives pod restarts.
+# Content survives: kubectl rollout restart, pod crashes, OOM kills.
+# Content is lost on: minikube delete (PVC is tied to the Minikube cluster).
+# To reset to a clean state: delete the PVC and re-apply, then re-seed from mysql_8/*.sql.
+#   kubectl -n cinemas delete pvc mysql-pvc && kubectl apply -f k8infra/quarkus-backend.yaml
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: mysql-pvc
+  namespace: cinemas
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 2Gi
 ---
 apiVersion: v1
 kind: ConfigMap
@@ -72,7 +94,10 @@ spec:
               name: metrics
       volumes:
         - name: mysql-data
-          emptyDir: {}
+          # PVC: data survives pod restarts and rollouts.
+          # To reset: delete + re-apply the mysql-pvc, then re-seed from mysql_8/*.sql
+          persistentVolumeClaim:
+            claimName: mysql-pvc
         - name: mysql-init
           configMap:
             name: mysql-init

@@ -110,7 +110,8 @@ kubectl -n cinemas get pods          # wait until all pods are Running
 ## 4) Seed databases
 
 The manifest creates empty `login_` and `book` databases via an init ConfigMap.
-Import schema, data, stored procedures, and triggers from the repo SQL dumps:
+MySQL data is persisted on a PVC (`mysql-pvc`) — the import below only needs to
+be run once per cluster (it survives pod restarts):
 
 ```bash
 kubectl -n cinemas exec -i deploy/mysql -- mysql -uroot -prootpw < mysql_8/login.sql
@@ -187,36 +188,20 @@ kubectl -n cinemas exec -i deploy/mysql -- mysql -uroot -prootpw < mysql_8/book.
 
 ### Persisting data across pod restarts
 
-By default, the MySQL deployment uses `emptyDir: {}` — **data is lost on every
-pod restart**. This is fine for ephemeral development (just re-import), but if
-you want data to survive pod restarts, switch to a PVC:
+MySQL now uses `mysql-pvc` (a 2 Gi PersistentVolumeClaim) by default — **data
+survives `kubectl rollout restart` and pod crashes**. No extra configuration is
+needed.
 
-```yaml
-# In quarkus-backend.yaml, replace the mysql volumes section:
-      volumes:
-        - name: mysql-data
-          persistentVolumeClaim:
-            claimName: mysql-pvc
+Data is **lost** when the Minikube cluster itself is deleted (`minikube delete`),
+since PVCs are tied to the cluster. To reset MySQL to a clean state, delete the
+PVC and re-apply the manifest, then re-seed:
+
+```bash
+kubectl -n cinemas delete pvc mysql-pvc
+kubectl apply -f k8infra/quarkus-backend.yaml
+kubectl -n cinemas exec -i deploy/mysql -- mysql -uroot -prootpw < mysql_8/login.sql
+kubectl -n cinemas exec -i deploy/mysql -- mysql -uroot -prootpw < mysql_8/book.sql
 ```
-
-And add the PVC (alongside the existing `pictures-pvc`):
-
-```yaml
-apiVersion: v1
-kind: PersistentVolumeClaim
-metadata:
-  name: mysql-pvc
-  namespace: cinemas
-spec:
-  accessModes:
-    - ReadWriteOnce
-  resources:
-    requests:
-      storage: 2Gi
-```
-
-> **Note:** With a PVC, data survives `kubectl rollout restart` and pod crashes,
-> but NOT `minikube delete`. The PVC is tied to the Minikube cluster.
 
 ### Re-sync workflow (restore from master again)
 
@@ -464,7 +449,7 @@ kubectl -n cinemas get pods -w
 ## Notes specific to this codebase
 
 - All external backend traffic goes through an in-cluster Apache reverse proxy service (`apache`) that fronts `/login`, `/mbook-1`, `/mbooks-1`, and `/simple-service-webapp`.
-- Film-review Angular routing uses plain hash routes (`#/...`), not hashbang (`#!/...`). Canonical URL example: `https://milo.crabdance.com/login/film-review/#/venues-list`.
+- Film-review Angular routing uses plain hash routes (`#/...`), not hashbang (`#!/...`) — this is configured via `$locationProvider.hashPrefix('')` in `film-review/app.js`. Canonical URL example: `https://milo.crabdance.com/login/film-review/#/venues-list`.
 - Legacy login/register Angular scripts are served from `/login/film-review/jsR/...` (filesystem: `dalogin-quarkus/src/main/resources/META-INF/resources/film-review/jsR/`).
 - **Apache proxy rule ordering matters.** In `proxy.conf`, WebSocket routes (`/mbook-1/ws`, `/mbooks-1/ws`) must appear **before** their parent HTTP routes (`/mbook-1`, `/mbooks-1`). Apache `mod_proxy` is first-match — if the HTTP route comes first it swallows WebSocket upgrade requests and the iOS client gets `Socket is not connected`.
 - `dalogin` expects one backend base URL (`WILDFLY_URL`) for both `/mbook-1` and `/mbooks-1`; it is pointed to the Apache service (`http://apache`, port 80).
