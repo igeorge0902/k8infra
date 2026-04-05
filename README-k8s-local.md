@@ -348,7 +348,7 @@ kubectl -n cinemas get svc,ingress
 kubectl -n cinemas get pods
 curl -sk https://milo.crabdance.com/login/
 curl -sk https://milo.crabdance.com/mbook-1/rest/device/test
-curl -sk https://milo.crabdance.com/mbooks-1/rest/book/hello
+curl -sk https://milo.crabdance.com/mbooks-1/rest/book/locations
 curl -sk https://milo.crabdance.com/simple-service-webapp/webapi/myresource
 # → Got it
 ```
