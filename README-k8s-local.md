@@ -356,9 +356,9 @@ curl -sk https://milo.crabdance.com/simple-service-webapp/webapi/myresource
 ## 7) Run the API tests
 
 ```bash
-python3 k8infra/test-login-admin.py
-python3 k8infra/test-login.py
+(cd k8infra/api-smoke-restassured && mvn test)
 ```
+
 
 ## 8) Redeploy after code changes
 

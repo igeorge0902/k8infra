@@ -10,8 +10,7 @@ Kubernetes manifests, API tests, and deployment runbook for the Cinemas booking 
 | `kubernetes.yaml` | Legacy WildFly-era manifest (reference only) |
 | `README-k8s-local.md` | Step-by-step local deployment runbook (Minikube + Podman) |
 | `system-documentation.html` | Comprehensive HTML documentation — architecture diagrams, database schemas, API reference, refactoring suggestions |
-| `test-login.py` | End-to-end API test — HMAC login + user retrieval + mbooks smoke test |
-| `test-login-admin.py` | Extended API test — login + admin endpoint + user data validation |
+| `api-smoke-restassured/` | **Primary API smoke framework** — Java + RestAssured tests |
 | `gen-quarkus-backend.py` | Utility to regenerate `quarkus-backend.yaml` from `kubernetes.yaml` |
 | `settings-local.xml` | Maven settings for local builds |
 | `tls/` | Self-signed TLS certificate + key for the NGINX ingress |
@@ -27,8 +26,7 @@ kubectl -n cinemas exec -i deploy/mysql -- mysql -uroot -prootpw < ../mysql_8/lo
 kubectl -n cinemas exec -i deploy/mysql -- mysql -uroot -prootpw < ../mysql_8/book.sql
 
 # Run API tests
-python3 test-login.py
-python3 test-login-admin.py
+(cd api-smoke-restassured && mvn test)
 ```
 
 For the full step-by-step guide, see [README-k8s-local.md](README-k8s-local.md).
@@ -65,6 +63,15 @@ For the full step-by-step guide, see [README-k8s-local.md](README-k8s-local.md).
 
 - MySQL runs with `--lower-case-table-names=1` for Hibernate entity compatibility.
 - Both `mysql_8/login.sql` and `mysql_8/book.sql` are self-contained — no additional fix scripts are needed.
+
+## CI tooling (local pre-push)
+
+```bash
+cd /Users/gyorgy.gaspar/work/cinemas/cinemas
+python3 k8infra/ci/check_governance.py
+```
+
+This runs naming lint + doc drift checks in one command.
 
 ## Part of the Cinemas platform
 
