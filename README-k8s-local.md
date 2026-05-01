@@ -17,7 +17,7 @@ This runbook brings up all backend services (`dalogin-quarkus`, `mbook-quarkus`,
 ### Start colima (Docker daemon)
 
 ```bash
-colima start --cpu 4 --memory 8 --disk 60
+colima start --cpu 4 --memory 4 --disk 20
 ```
 
 > colima provides a Docker-compatible daemon without Docker Desktop.
@@ -27,7 +27,7 @@ colima start --cpu 4 --memory 8 --disk 60
 ### Start Minikube with the Docker driver
 
 ```bash
-minikube start --driver=docker --cpus=4 --memory=8192
+minikube start --driver=docker --cpus=4 --memory=3900
 ```
 
 Enable the NGINX ingress controller:
@@ -106,6 +106,38 @@ done
 kubectl apply -f k8infra/quarkus-backend.yaml
 kubectl -n cinemas get pods          # wait until all pods are Running
 ```
+
+### Orchestrator mode (recommended for daily local bring-up)
+
+The repository now includes a startup orchestrator at `k8infra/k8s-orchestrator.sh`.
+It wraps the common local lifecycle into one command while keeping this runbook's
+manual commands as fallback.
+
+```bash
+chmod +x k8infra/k8s-orchestrator.sh
+
+# Full startup (runtime checks + apply + dependency-aware rollout + endpoint checks)
+./k8infra/k8s-orchestrator.sh up
+
+# Optional: include SQL seed import (mysql_8/login.sql + mysql_8/book.sql)
+./k8infra/k8s-orchestrator.sh up --seed
+
+# Health snapshot (deployments/pods/services/ingress + endpoint reachability)
+./k8infra/k8s-orchestrator.sh status
+
+# Service-scoped restart only
+./k8infra/k8s-orchestrator.sh restart mbooks
+
+# Service-scoped rebuild/load/rollout (same naming as the redeploy section below)
+./k8infra/k8s-orchestrator.sh restart mbooks --build
+
+# Stop stack without deleting PVCs
+./k8infra/k8s-orchestrator.sh down
+```
+
+The orchestrator enforces startup order for app dependencies:
+`mysql` -> `dalogin` -> `mbook` -> `mbooks` -> `simple-service-webapp`.
+If a dependency does not become ready in time, it exits non-zero at that step.
 
 ## 4) Seed databases
 
@@ -468,7 +500,7 @@ kubectl -n cinemas get pods -w
 | `ImagePullBackOff` on pods | Images not loaded into Minikube | Re-run image build/load (step 2) |
 | WebSocket: `Socket is not connected` | Apache proxy rule ordering wrong, or HTTP/2 stripping headers | Check `proxy.conf` ordering; use `--http1.1` for curl tests |
 | `minikube image load` hangs | Large images + Docker driver | Use `minikube docker-env` (Option A) instead |
-| colima not responding | VM crashed after sleep | `colima stop && colima start --cpu 4 --memory 8 --disk 60` |
+| colima not responding | VM crashed after sleep | `colima stop && colima start --cpu 4 --memory 4 --disk 20` |
 
 ---
 

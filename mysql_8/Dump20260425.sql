@@ -25,17 +25,17 @@ DROP TABLE IF EXISTS `device_states`;
 /*!40101 SET @saved_cs_client     = @@character_set_client */;
 /*!50503 SET character_set_client = utf8mb4 */;
 CREATE TABLE `device_states` (
-    `id` int unsigned NOT NULL AUTO_INCREMENT,
-    `uuid` char(255) CHARACTER SET utf8mb3 COLLATE utf8mb3_bin DEFAULT NULL,
-    `state` enum('logged_in','playing','logged_out','deleted') CHARACTER SET utf8mb3 COLLATE utf8mb3_bin DEFAULT NULL,
-    `SessionID` char(255) CHARACTER SET utf8mb3 COLLATE utf8mb3_bin DEFAULT NULL,
-    `deviceId` char(255) CHARACTER SET utf8mb3 COLLATE utf8mb3_general_ci DEFAULT NULL,
-    `TIME_` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-    `devices_id` int DEFAULT NULL,
-    PRIMARY KEY (`id`),
-    KEY `state` (`state`),
-    KEY `deviceId` (`deviceId`),
-    KEY `time` (`TIME_`),
+  `id` int unsigned NOT NULL AUTO_INCREMENT,
+  `uuid` char(255) CHARACTER SET utf8mb3 COLLATE utf8mb3_bin DEFAULT NULL,
+  `state` enum('logged_in','playing','logged_out','deleted') CHARACTER SET utf8mb3 COLLATE utf8mb3_bin DEFAULT NULL,
+  `SessionID` char(255) CHARACTER SET utf8mb3 COLLATE utf8mb3_bin DEFAULT NULL,
+  `deviceId` char(255) CHARACTER SET utf8mb3 COLLATE utf8mb3_general_ci DEFAULT NULL,
+  `TIME_` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  `devices_id` int DEFAULT NULL,
+  PRIMARY KEY (`id`),
+  KEY `state` (`state`),
+  KEY `deviceId` (`deviceId`),
+  KEY `time` (`TIME_`),
   KEY `sessionID` (`SessionID`),
   KEY `fk_devices_idx` (`devices_id`),
   CONSTRAINT `fk_devices` FOREIGN KEY (`devices_id`) REFERENCES `devices` (`id`) ON DELETE CASCADE
@@ -60,12 +60,12 @@ DROP TABLE IF EXISTS `devices`;
 /*!40101 SET @saved_cs_client     = @@character_set_client */;
 /*!50503 SET character_set_client = utf8mb4 */;
 CREATE TABLE `devices` (
-    `id` int NOT NULL AUTO_INCREMENT,
-    `deviceId` char(255) CHARACTER SET utf8mb3 COLLATE utf8mb3_bin DEFAULT NULL,
-    `uuid` char(255) CHARACTER SET utf8mb3 COLLATE utf8mb3_bin DEFAULT NULL,
-    `TIME_` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-     PRIMARY KEY (`id`),
-     KEY `uuid` (`uuid`)
+  `id` int NOT NULL AUTO_INCREMENT,
+  `deviceId` char(255) CHARACTER SET utf8mb3 COLLATE utf8mb3_bin DEFAULT NULL,
+  `uuid` char(255) CHARACTER SET utf8mb3 COLLATE utf8mb3_bin DEFAULT NULL,
+  `TIME_` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  PRIMARY KEY (`id`),
+  KEY `uuid` (`uuid`)
 ) ENGINE=InnoDB AUTO_INCREMENT=45 DEFAULT CHARSET=utf8mb3 COLLATE=utf8mb3_bin;
 /*!40101 SET character_set_client = @saved_cs_client */;
 
@@ -108,16 +108,16 @@ DROP TABLE IF EXISTS `forgotPsw`;
 /*!40101 SET @saved_cs_client     = @@character_set_client */;
 /*!50503 SET character_set_client = utf8mb4 */;
 CREATE TABLE `forgotPsw` (
-    `id` int NOT NULL AUTO_INCREMENT,
-    `forgotUserEmail` char(255) NOT NULL,
-    `forgotRequestToken` char(255) DEFAULT NULL,
-    `forgotRequestTime` char(255) DEFAULT NULL,
-    `isValid` tinyint(1) DEFAULT NULL,
-    `TIME_` timestamp NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-    PRIMARY KEY (`id`),
-    UNIQUE KEY `forgotUserEmail_UNIQUE` (`forgotUserEmail`),
-    UNIQUE KEY `forgotRequestToken_UNIQUE` (`forgotRequestToken`)
-    ) ENGINE=InnoDB AUTO_INCREMENT=4 DEFAULT CHARSET=latin1;
+  `id` int NOT NULL AUTO_INCREMENT,
+  `forgotUserEmail` char(255) NOT NULL,
+  `forgotRequestToken` char(255) DEFAULT NULL,
+  `forgotRequestTime` char(255) DEFAULT NULL,
+  `isValid` tinyint(1) DEFAULT NULL,
+  `TIME_` timestamp NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `forgotUserEmail_UNIQUE` (`forgotUserEmail`),
+  UNIQUE KEY `forgotRequestToken_UNIQUE` (`forgotRequestToken`)
+) ENGINE=InnoDB AUTO_INCREMENT=4 DEFAULT CHARSET=latin1;
 /*!40101 SET character_set_client = @saved_cs_client */;
 
 --
@@ -173,15 +173,15 @@ DROP TABLE IF EXISTS `Last_seen`;
 /*!40101 SET @saved_cs_client     = @@character_set_client */;
 /*!50503 SET character_set_client = utf8mb4 */;
 CREATE TABLE `Last_seen` (
-    `id` int NOT NULL AUTO_INCREMENT,
-    `deviceId` char(255) CHARACTER SET utf8mb3 COLLATE utf8mb3_bin NOT NULL DEFAULT '0000',
-    `Session_` mediumtext CHARACTER SET utf8mb3 COLLATE utf8mb3_bin,
-    `TIME_` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-    `devices_id` int DEFAULT NULL,
-     PRIMARY KEY (`id`,`deviceId`),
-     KEY `deviceId` (`deviceId`),
-     KEY `fk_devices_idx` (`devices_id`),
-     CONSTRAINT `fk_devices2` FOREIGN KEY (`devices_id`) REFERENCES `devices` (`id`) ON DELETE CASCADE
+  `id` int NOT NULL AUTO_INCREMENT,
+  `deviceId` char(255) CHARACTER SET utf8mb3 COLLATE utf8mb3_bin NOT NULL DEFAULT '0000',
+  `Session_` mediumtext CHARACTER SET utf8mb3 COLLATE utf8mb3_bin,
+  `TIME_` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  `devices_id` int DEFAULT NULL,
+  PRIMARY KEY (`id`,`deviceId`),
+  KEY `deviceId` (`deviceId`),
+  KEY `fk_devices_idx` (`devices_id`),
+  CONSTRAINT `fk_devices2` FOREIGN KEY (`devices_id`) REFERENCES `devices` (`id`) ON DELETE CASCADE
 ) ENGINE=InnoDB AUTO_INCREMENT=45 DEFAULT CHARSET=utf8mb3 COLLATE=utf8mb3_bin;
 /*!40101 SET character_set_client = @saved_cs_client */;
 
@@ -242,20 +242,20 @@ DROP TABLE IF EXISTS `logins`;
 /*!40101 SET @saved_cs_client     = @@character_set_client */;
 /*!50503 SET character_set_client = utf8mb4 */;
 CREATE TABLE `logins` (
-    `id` int NOT NULL AUTO_INCREMENT,
-    `hash_` char(255) CHARACTER SET utf8mb3 COLLATE utf8mb3_bin NOT NULL,
-    `user` varchar(255) CHARACTER SET utf8mb3 COLLATE utf8mb3_bin DEFAULT NULL,
-    `uuid` char(255) CHARACTER SET utf8mb3 COLLATE utf8mb3_bin DEFAULT NULL,
-    `email` char(255) CHARACTER SET utf8mb3 COLLATE utf8mb3_bin DEFAULT NULL,
-    `TIME_` timestamp NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-    `profilePicture` varchar(1024) CHARACTER SET utf8mb3 COLLATE utf8mb3_bin DEFAULT NULL,
-     PRIMARY KEY (`id`),
-     UNIQUE KEY `email_UNIQUE` (`email`),
-     UNIQUE KEY `uuid` (`uuid`),
-     UNIQUE KEY `user_UNIQUE` (`user`),
-     KEY `user` (`user`),
-     KEY `hash_` (`hash_`),
-     FULLTEXT KEY `user_2` (`user`)
+  `id` int NOT NULL AUTO_INCREMENT,
+  `hash_` char(255) CHARACTER SET utf8mb3 COLLATE utf8mb3_bin NOT NULL,
+  `user` varchar(255) CHARACTER SET utf8mb3 COLLATE utf8mb3_bin DEFAULT NULL,
+  `uuid` char(255) CHARACTER SET utf8mb3 COLLATE utf8mb3_bin DEFAULT NULL,
+  `email` char(255) CHARACTER SET utf8mb3 COLLATE utf8mb3_bin DEFAULT NULL,
+  `TIME_` timestamp NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  `profilePicture` varchar(1024) CHARACTER SET utf8mb3 COLLATE utf8mb3_bin DEFAULT NULL,
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `email_UNIQUE` (`email`),
+  UNIQUE KEY `uuid` (`uuid`),
+  UNIQUE KEY `user_UNIQUE` (`user`),
+  KEY `user` (`user`),
+  KEY `hash_` (`hash_`),
+  FULLTEXT KEY `user_2` (`user`)
 ) ENGINE=InnoDB AUTO_INCREMENT=12 DEFAULT CHARSET=utf8mb3 COLLATE=utf8mb3_bin;
 /*!40101 SET character_set_client = @saved_cs_client */;
 
@@ -313,18 +313,18 @@ DROP TABLE IF EXISTS `Tokens`;
 /*!40101 SET @saved_cs_client     = @@character_set_client */;
 /*!50503 SET character_set_client = utf8mb4 */;
 CREATE TABLE `Tokens` (
-    `id` int NOT NULL AUTO_INCREMENT,
-    `deviceId` char(255) CHARACTER SET utf8mb3 COLLATE utf8mb3_bin DEFAULT NULL,
-    `token1` char(255) CHARACTER SET utf8mb3 COLLATE utf8mb3_bin DEFAULT NULL,
-    `token2` char(255) CHARACTER SET utf8mb3 COLLATE utf8mb3_bin DEFAULT NULL,
-    `TIME_` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-    `devices_id` int DEFAULT NULL,
-     PRIMARY KEY (`id`),
-     UNIQUE KEY `token1` (`token1`),
-     UNIQUE KEY `token2` (`token2`),
-     KEY `token2_2` (`token2`),
-     KEY `fk_devices3_idx` (`devices_id`),
-     CONSTRAINT `fk_devices3` FOREIGN KEY (`devices_id`) REFERENCES `devices` (`id`) ON DELETE CASCADE
+  `id` int NOT NULL AUTO_INCREMENT,
+  `deviceId` char(255) CHARACTER SET utf8mb3 COLLATE utf8mb3_bin DEFAULT NULL,
+  `token1` char(255) CHARACTER SET utf8mb3 COLLATE utf8mb3_bin DEFAULT NULL,
+  `token2` char(255) CHARACTER SET utf8mb3 COLLATE utf8mb3_bin DEFAULT NULL,
+  `TIME_` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  `devices_id` int DEFAULT NULL,
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `token1` (`token1`),
+  UNIQUE KEY `token2` (`token2`),
+  KEY `token2_2` (`token2`),
+  KEY `fk_devices3_idx` (`devices_id`),
+  CONSTRAINT `fk_devices3` FOREIGN KEY (`devices_id`) REFERENCES `devices` (`id`) ON DELETE CASCADE
 ) ENGINE=InnoDB AUTO_INCREMENT=45 DEFAULT CHARSET=utf8mb3 COLLATE=utf8mb3_bin;
 /*!40101 SET character_set_client = @saved_cs_client */;
 
@@ -382,7 +382,7 @@ DROP TABLE IF EXISTS `user_on_devices`;
 /*!50001 DROP VIEW IF EXISTS `user_on_devices`*/;
 SET @saved_cs_client     = @@character_set_client;
 /*!50503 SET character_set_client = utf8mb4 */;
-/*!50001 CREATE VIEW `user_on_devices` AS SELECT
+/*!50001 CREATE VIEW `user_on_devices` AS SELECT 
  1 AS `user`,
  1 AS `uuid`,
  1 AS `email`,
@@ -401,18 +401,18 @@ DROP TABLE IF EXISTS `voucher_states`;
 /*!40101 SET @saved_cs_client     = @@character_set_client */;
 /*!50503 SET character_set_client = utf8mb4 */;
 CREATE TABLE `voucher_states` (
-    `id` int unsigned NOT NULL AUTO_INCREMENT,
-    `state` enum('free','processing','registered','expired') DEFAULT NULL,
-    `voucher_` char(255) DEFAULT NULL,
-    `duration_in_seconds` int unsigned DEFAULT NULL,
-    `toBeActivated` tinyint(1) DEFAULT NULL,
-    `isActivated` tinyint(1) NOT NULL,
-    `TIME_` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-    `activation_token` char(255) DEFAULT NULL,
-    PRIMARY KEY (`id`),
-    UNIQUE KEY `voucher_` (`voucher_`),
-    KEY `state` (`state`)
-    ) ENGINE=InnoDB AUTO_INCREMENT=21 DEFAULT CHARSET=utf8mb3;
+  `id` int unsigned NOT NULL AUTO_INCREMENT,
+  `state` enum('free','processing','registered','expired') DEFAULT NULL,
+  `voucher_` char(255) DEFAULT NULL,
+  `duration_in_seconds` int unsigned DEFAULT NULL,
+  `toBeActivated` tinyint(1) DEFAULT NULL,
+  `isActivated` tinyint(1) NOT NULL,
+  `TIME_` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  `activation_token` char(255) DEFAULT NULL,
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `voucher_` (`voucher_`),
+  KEY `state` (`state`)
+) ENGINE=InnoDB AUTO_INCREMENT=21 DEFAULT CHARSET=utf8mb3;
 /*!40101 SET character_set_client = @saved_cs_client */;
 
 --
@@ -433,16 +433,16 @@ DROP TABLE IF EXISTS `vouchers`;
 /*!40101 SET @saved_cs_client     = @@character_set_client */;
 /*!50503 SET character_set_client = utf8mb4 */;
 CREATE TABLE `vouchers` (
-    `id` int NOT NULL AUTO_INCREMENT,
-    `voucherUuid` char(255) CHARACTER SET utf8mb3 COLLATE utf8mb3_general_ci DEFAULT NULL,
-    `voucher_` char(255) CHARACTER SET utf8mb3 COLLATE utf8mb3_general_ci DEFAULT NULL,
-    `uuid` char(255) CHARACTER SET utf8mb3 COLLATE utf8mb3_bin DEFAULT NULL,
-    `TIME_` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-     PRIMARY KEY (`id`),
-     UNIQUE KEY `uuid` (`uuid`),
-     UNIQUE KEY `voucherUuid_UNIQUE` (`voucherUuid`),
-     UNIQUE KEY `voucher__UNIQUE` (`voucher_`),
-     KEY `uuid_2` (`uuid`)
+  `id` int NOT NULL AUTO_INCREMENT,
+  `voucherUuid` char(255) CHARACTER SET utf8mb3 COLLATE utf8mb3_general_ci DEFAULT NULL,
+  `voucher_` char(255) CHARACTER SET utf8mb3 COLLATE utf8mb3_general_ci DEFAULT NULL,
+  `uuid` char(255) CHARACTER SET utf8mb3 COLLATE utf8mb3_bin DEFAULT NULL,
+  `TIME_` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `uuid` (`uuid`),
+  UNIQUE KEY `voucherUuid_UNIQUE` (`voucherUuid`),
+  UNIQUE KEY `voucher__UNIQUE` (`voucher_`),
+  KEY `uuid_2` (`uuid`)
 ) ENGINE=InnoDB AUTO_INCREMENT=17 DEFAULT CHARSET=utf8mb3 COLLATE=utf8mb3_bin;
 /*!40101 SET character_set_client = @saved_cs_client */;
 
@@ -492,12 +492,12 @@ DELIMITER ;
 DELIMITER ;;
 CREATE DEFINER=`root`@`localhost` PROCEDURE `activate_voucher`(IN user char(255))
 BEGIN
-    DECLARE activationCode char(255);
-    SELECT activation_Token INTO activationCode FROM login_.voucher_states
-        JOIN login_.vouchers ON vouchers.voucher_ = voucher_states.voucher_
-        JOIN login_.logins ON logins.uuid = vouchers.uuid
+  DECLARE activationCode char(255);
+  SELECT activation_Token INTO activationCode FROM login_.voucher_states
+    JOIN login_.vouchers ON vouchers.voucher_ = voucher_states.voucher_
+    JOIN login_.logins ON logins.uuid = vouchers.uuid
     WHERE login_.logins.user = user;
-    UPDATE login_.voucher_states
+  UPDATE login_.voucher_states
     SET login_.voucher_states.isActivated = 1,
         login_.voucher_states.toBeActivated = 0
     WHERE login_.voucher_states.activation_Token = activationCode;
@@ -519,9 +519,9 @@ DELIMITER ;
 DELIMITER ;;
 CREATE DEFINER=`root`@`localhost` PROCEDURE `check_voucher`(IN voucher_ char(255))
 BEGIN
-    SELECT voucher_ FROM login_.voucher_states
-    WHERE login_.voucher_states.voucher_ = voucher_
-      AND login_.voucher_states.state = 'registered';
+  SELECT voucher_ FROM login_.voucher_states
+  WHERE login_.voucher_states.voucher_ = voucher_
+    AND login_.voucher_states.state = 'registered';
 END ;;
 DELIMITER ;
 /*!50003 SET sql_mode              = @saved_sql_mode */ ;
@@ -540,15 +540,15 @@ DELIMITER ;
 DELIMITER ;;
 CREATE DEFINER=`root`@`localhost` PROCEDURE `copy_token2`(IN voucher_ char(255))
 BEGIN
-    DECLARE token2_ char(255);
-    SELECT login_.Tokens.token2 INTO token2_
+  DECLARE token2_ char(255);
+  SELECT login_.Tokens.token2 INTO token2_
     FROM login_.devices
-        JOIN login_.vouchers ON login_.devices.uuid = login_.vouchers.uuid
-        JOIN login_.Tokens ON login_.Tokens.deviceId = login_.devices.deviceId
-        JOIN login_.voucher_states ON login_.voucher_states.voucher_ = vouchers.voucher_
+    JOIN login_.vouchers ON login_.devices.uuid = login_.vouchers.uuid
+    JOIN login_.Tokens ON login_.Tokens.deviceId = login_.devices.deviceId
+    JOIN login_.voucher_states ON login_.voucher_states.voucher_ = vouchers.voucher_
     WHERE login_.vouchers.voucher_ = voucher_
-        ORDER BY login_.Tokens.TIME_ DESC LIMIT 1;
-    UPDATE login_.voucher_states
+    ORDER BY login_.Tokens.TIME_ DESC LIMIT 1;
+  UPDATE login_.voucher_states
     SET login_.voucher_states.activation_token = token2_
     WHERE login_.voucher_states.voucher_ = voucher_;
 END ;;
@@ -569,20 +569,20 @@ DELIMITER ;
 DELIMITER ;;
 CREATE DEFINER=`root`@`localhost` PROCEDURE `delete_user`(IN user_ char(255))
 BEGIN
-    DECLARE uuid_ char(255);
-    DECLARE voucher char(255);
-    SELECT uuid INTO uuid_ FROM logins WHERE logins.user = user_;
-    SELECT login_.vouchers.voucher_ INTO voucher
+  DECLARE uuid_ char(255);
+  DECLARE voucher char(255);
+  SELECT uuid INTO uuid_ FROM logins WHERE logins.user = user_;
+  SELECT login_.vouchers.voucher_ INTO voucher
     FROM login_.logins
-        JOIN login_.vouchers ON login_.logins.uuid = login_.vouchers.uuid
+    JOIN login_.vouchers ON login_.logins.uuid = login_.vouchers.uuid
     WHERE login_.vouchers.uuid = uuid_;
-    UPDATE login_.voucher_states
+  UPDATE login_.voucher_states
     SET login_.voucher_states.state = 'free',
         login_.voucher_states.activation_token = null
     WHERE login_.voucher_states.voucher_ = voucher
       AND (login_.voucher_states.state = 'registered' OR login_.voucher_states.state = 'processing');
-    DELETE FROM login_.logins WHERE login_.logins.uuid = uuid_;
-    DELETE FROM login_.vouchers WHERE login_.vouchers.uuid = uuid_;
+  DELETE FROM login_.logins WHERE login_.logins.uuid = uuid_;
+  DELETE FROM login_.vouchers WHERE login_.vouchers.uuid = uuid_;
 END ;;
 DELIMITER ;
 /*!50003 SET sql_mode              = @saved_sql_mode */ ;
@@ -601,7 +601,7 @@ DELIMITER ;
 DELIMITER ;;
 CREATE DEFINER=`root`@`localhost` PROCEDURE `find_email`(IN email char(255))
 BEGIN
-    SELECT email FROM login_.logins WHERE login_.logins.email = email;
+  SELECT email FROM login_.logins WHERE login_.logins.email = email;
 END ;;
 DELIMITER ;
 /*!50003 SET sql_mode              = @saved_sql_mode */ ;
@@ -620,11 +620,11 @@ DELIMITER ;
 DELIMITER ;;
 CREATE DEFINER=`root`@`localhost` PROCEDURE `find_email2`(IN email char(255))
 BEGIN
-    DECLARE email_ char(255);
-    SELECT email INTO email_ FROM login_.logins WHERE login_.logins.email = email;
-    SELECT forgotRequestToken, forgotRequestTime FROM login_.forgotPsw
+  DECLARE email_ char(255);
+  SELECT email INTO email_ FROM login_.logins WHERE login_.logins.email = email;
+  SELECT forgotRequestToken, forgotRequestTime FROM login_.forgotPsw
     WHERE login_.forgotPsw.forgotUserEmail = email_
-    AND login_.forgotPsw.isValid = 1;
+      AND login_.forgotPsw.isValid = 1;
 END ;;
 DELIMITER ;
 /*!50003 SET sql_mode              = @saved_sql_mode */ ;
@@ -643,17 +643,17 @@ DELIMITER ;
 DELIMITER ;;
 CREATE DEFINER=`root`@`localhost` PROCEDURE `forgot_password`(IN email char(255), IN time char(255))
 BEGIN
-    DECLARE forgotRequestToken_ char(255);
-    DECLARE id_ int;
-    SELECT id, forgotRequestToken INTO id_, forgotRequestToken_ FROM forgotPsw WHERE forgotUserEmail = email;
-    IF forgotRequestToken_ IS NULL THEN
+  DECLARE forgotRequestToken_ char(255);
+  DECLARE id_ int;
+  SELECT id, forgotRequestToken INTO id_, forgotRequestToken_ FROM forgotPsw WHERE forgotUserEmail = email;
+  IF forgotRequestToken_ IS NULL THEN
     INSERT INTO forgotPsw (forgotUserEmail, forgotRequestTime) VALUES (email, time);
-    ELSE
+  ELSE
     UPDATE forgotPsw
     SET forgotPsw.forgotUserEmail = email, forgotPsw.forgotRequestTime = time, forgotPsw.isValid = 1
     WHERE id = id_;
-END IF;
-SELECT forgotRequestToken FROM forgotPsw WHERE forgotUserEmail = email;
+  END IF;
+  SELECT forgotRequestToken FROM forgotPsw WHERE forgotUserEmail = email;
 END ;;
 DELIMITER ;
 /*!50003 SET sql_mode              = @saved_sql_mode */ ;
@@ -672,10 +672,10 @@ DELIMITER ;
 DELIMITER ;;
 CREATE DEFINER=`root`@`localhost` PROCEDURE `get_activation_vocher`(IN user char(255))
 BEGIN
-    SELECT voucher_states.activation_token, logins.email FROM voucher_states
-                                                                  JOIN vouchers ON vouchers.voucher_ = voucher_states.voucher_
-                                                                  JOIN logins ON vouchers.uuid = logins.uuid
-    WHERE logins.user = user;
+  SELECT voucher_states.activation_token, logins.email FROM voucher_states
+  JOIN vouchers ON vouchers.voucher_ = voucher_states.voucher_
+  JOIN logins ON vouchers.uuid = logins.uuid
+  WHERE logins.user = user;
 END ;;
 DELIMITER ;
 /*!50003 SET sql_mode              = @saved_sql_mode */ ;
@@ -694,8 +694,8 @@ DELIMITER ;
 DELIMITER ;;
 CREATE DEFINER=`root`@`localhost` PROCEDURE `get_hash`(IN hash_ char(255), IN user_ char(255))
 BEGIN
-    SELECT hash_ FROM login_.logins
-    WHERE login_.logins.hash_ = hash_ AND login_.logins.user = user_;
+  SELECT hash_ FROM login_.logins
+  WHERE login_.logins.hash_ = hash_ AND login_.logins.user = user_;
 END ;;
 DELIMITER ;
 /*!50003 SET sql_mode              = @saved_sql_mode */ ;
@@ -714,9 +714,9 @@ DELIMITER ;
 DELIMITER ;;
 CREATE DEFINER=`root`@`localhost` PROCEDURE `get_processing_voucher`(IN voucher_ char(255))
 BEGIN
-    SELECT voucher_ FROM login_.voucher_states
-    WHERE login_.voucher_states.voucher_ = voucher_
-      AND login_.voucher_states.state = 'processing';
+  SELECT voucher_ FROM login_.voucher_states
+  WHERE login_.voucher_states.voucher_ = voucher_
+    AND login_.voucher_states.state = 'processing';
 END ;;
 DELIMITER ;
 /*!50003 SET sql_mode              = @saved_sql_mode */ ;
@@ -735,7 +735,7 @@ DELIMITER ;
 DELIMITER ;;
 CREATE DEFINER=`root`@`localhost` PROCEDURE `get_token`(IN deviceId_ char(255))
 BEGIN
-    SELECT token1 FROM Tokens WHERE deviceId = deviceId_ ORDER BY TIME_ DESC LIMIT 1;
+  SELECT token1 FROM Tokens WHERE deviceId = deviceId_ ORDER BY TIME_ DESC LIMIT 1;
 END ;;
 DELIMITER ;
 /*!50003 SET sql_mode              = @saved_sql_mode */ ;
@@ -754,9 +754,9 @@ DELIMITER ;
 DELIMITER ;;
 CREATE DEFINER=`root`@`localhost` PROCEDURE `get_token2`(IN deviceId_ char(255))
 BEGIN
-    SELECT Tokens.token2, Last_seen.Session_ FROM Tokens
-                                                      JOIN Last_seen ON Tokens.deviceId = Last_seen.deviceId
-    WHERE Tokens.deviceId = deviceId_ ORDER BY Tokens.TIME_ DESC LIMIT 1;
+  SELECT Tokens.token2, Last_seen.Session_ FROM Tokens
+  JOIN Last_seen ON Tokens.deviceId = Last_seen.deviceId
+  WHERE Tokens.deviceId = deviceId_ ORDER BY Tokens.TIME_ DESC LIMIT 1;
 END ;;
 DELIMITER ;
 /*!50003 SET sql_mode              = @saved_sql_mode */ ;
@@ -775,7 +775,7 @@ DELIMITER ;
 DELIMITER ;;
 CREATE DEFINER=`root`@`localhost` PROCEDURE `get_uuid`(IN user_ char(255))
 BEGIN
-    SELECT uuid FROM logins WHERE user = user_;
+  SELECT uuid FROM logins WHERE user = user_;
 END ;;
 DELIMITER ;
 /*!50003 SET sql_mode              = @saved_sql_mode */ ;
@@ -794,9 +794,9 @@ DELIMITER ;
 DELIMITER ;;
 CREATE DEFINER=`root`@`localhost` PROCEDURE `get_voucher`(IN voucher_ char(255))
 BEGIN
-    SELECT voucher_ FROM login_.voucher_states
-    WHERE login_.voucher_states.voucher_ = voucher_
-      AND login_.voucher_states.state = 'free';
+  SELECT voucher_ FROM login_.voucher_states
+  WHERE login_.voucher_states.voucher_ = voucher_
+    AND login_.voucher_states.state = 'free';
 END ;;
 DELIMITER ;
 /*!50003 SET sql_mode              = @saved_sql_mode */ ;
@@ -815,9 +815,9 @@ DELIMITER ;
 DELIMITER ;;
 CREATE DEFINER=`root`@`localhost` PROCEDURE `insert_device`(IN deviceId_ char(255), IN user_ varchar(255))
 BEGIN
-    DECLARE uuid_ char(255);
-    SELECT uuid INTO uuid_ FROM logins WHERE logins.user = user_;
-    INSERT INTO devices (deviceId, uuid) VALUES (deviceId_, uuid_);
+  DECLARE uuid_ char(255);
+  SELECT uuid INTO uuid_ FROM logins WHERE logins.user = user_;
+  INSERT INTO devices (deviceId, uuid) VALUES (deviceId_, uuid_);
 END ;;
 DELIMITER ;
 /*!50003 SET sql_mode              = @saved_sql_mode */ ;
@@ -836,18 +836,18 @@ DELIMITER ;
 DELIMITER ;;
 CREATE DEFINER=`root`@`localhost` PROCEDURE `insert_device_`(IN deviceId_ char(255), IN user_ varchar(255))
 BEGIN
-    DECLARE uuid_ char(255);
-    DECLARE devices_ char(255);
-    SELECT uuid INTO uuid_ FROM logins WHERE logins.user = user_;
-    SELECT deviceId INTO devices_ FROM devices WHERE devices.deviceId = deviceId_ AND devices.uuid = uuid_;
-    IF deviceId_ != devices_ OR devices_ IS NULL THEN
+  DECLARE uuid_ char(255);
+  DECLARE devices_ char(255);
+  SELECT uuid INTO uuid_ FROM logins WHERE logins.user = user_;
+  SELECT deviceId INTO devices_ FROM devices WHERE devices.deviceId = deviceId_ AND devices.uuid = uuid_;
+  IF deviceId_ != devices_ OR devices_ IS NULL THEN
     INSERT INTO devices (deviceId, uuid) VALUES (deviceId_, uuid_);
-    ELSE
+  ELSE
     UPDATE device_states
     SET device_states.state = 'logged_in'
     WHERE device_states.deviceId = deviceId_
-      AND device_states.uuid = uuid_;
-END IF;
+    AND device_states.uuid = uuid_;
+  END IF;
 END ;;
 DELIMITER ;
 /*!50003 SET sql_mode              = @saved_sql_mode */ ;
@@ -866,21 +866,21 @@ DELIMITER ;
 DELIMITER ;;
 CREATE DEFINER=`root`@`localhost` PROCEDURE `insert_sessionCreated`(IN deviceId_ char(255), IN sessionCreated_ long, IN sessionID_ char(255))
 BEGIN
-    DECLARE devices_ char(255);
-    DECLARE id_ int;
-    DECLARE idS_ int;
-    SELECT id, deviceId INTO id_, devices_ FROM Last_seen WHERE deviceId = deviceId_;
-    SELECT id INTO idS_ FROM device_states WHERE deviceId = deviceId_ ORDER BY TIME_ DESC LIMIT 1;
-    IF deviceId_ != devices_ OR devices_ IS NULL THEN
+  DECLARE devices_ char(255);
+  DECLARE id_ int;
+  DECLARE idS_ int;
+  SELECT id, deviceId INTO id_, devices_ FROM Last_seen WHERE deviceId = deviceId_;
+  SELECT id INTO idS_ FROM device_states WHERE deviceId = deviceId_ ORDER BY TIME_ DESC LIMIT 1;
+  IF deviceId_ != devices_ OR devices_ IS NULL THEN
     INSERT INTO Last_seen (deviceId, Session_, devices_id) VALUES (deviceId_, sessionCreated_, idS_);
     UPDATE device_states SET SessionID = sessionID_ WHERE device_states.deviceId = deviceId_ AND device_states.id = idS_;
-    ELSE
+  ELSE
     UPDATE Last_seen
     SET Last_seen.Session_ = sessionCreated_
     WHERE Last_seen.deviceId = deviceId_ AND Last_seen.id = id_;
     UPDATE device_states SET SessionID = sessionID_
     WHERE device_states.deviceId = deviceId_ AND device_states.id = idS_;
-END IF;
+  END IF;
 END ;;
 DELIMITER ;
 /*!50003 SET sql_mode              = @saved_sql_mode */ ;
@@ -899,12 +899,12 @@ DELIMITER ;
 DELIMITER ;;
 CREATE DEFINER=`root`@`localhost` PROCEDURE `insert_voucher`(IN voucher char(255), IN user_ varchar(255), IN pass char(255))
 BEGIN
-    DECLARE uuid_ char(255);
-    SELECT uuid INTO uuid_ FROM logins
-    WHERE logins.user = user_ AND logins.hash_ = pass;
-    UPDATE vouchers
-        JOIN logins ON vouchers.uuid = logins.uuid
-    SET vouchers.voucher_ = voucher
+  DECLARE uuid_ char(255);
+  SELECT uuid INTO uuid_ FROM logins
+  WHERE logins.user = user_ AND logins.hash_ = pass;
+  UPDATE vouchers
+  JOIN logins ON vouchers.uuid = logins.uuid
+  SET vouchers.voucher_ = voucher
   WHERE vouchers.uuid = uuid_;
 END ;;
 DELIMITER ;
@@ -924,11 +924,11 @@ DELIMITER ;
 DELIMITER ;;
 CREATE DEFINER=`root`@`localhost` PROCEDURE `isActivated`(IN user_ varchar(255))
 BEGIN
-    SELECT a.isActivated AS state
-    FROM voucher_states a
-             LEFT JOIN vouchers b ON a.voucher_ = b.voucher_
-             LEFT JOIN logins c ON c.uuid = b.uuid
-    WHERE c.user = user_;
+  SELECT a.isActivated AS state
+  FROM voucher_states a
+  LEFT JOIN vouchers b ON a.voucher_ = b.voucher_
+  LEFT JOIN logins c ON c.uuid = b.uuid
+  WHERE c.user = user_;
 END ;;
 DELIMITER ;
 /*!50003 SET sql_mode              = @saved_sql_mode */ ;
@@ -947,15 +947,15 @@ DELIMITER ;
 DELIMITER ;;
 CREATE DEFINER=`root`@`localhost` PROCEDURE `logout_device`(IN sessionID_ char(255))
 BEGIN
-    DECLARE deviceId_ char(255);
-    UPDATE device_states
-    SET device_states.state = 'logged_out'
-    WHERE device_states.sessionID = sessionID_;
-    SELECT deviceId INTO deviceId_ FROM device_states
-    WHERE device_states.sessionID = sessionID_;
-    UPDATE Tokens
-    SET Tokens.token1 = 0 AND Tokens.token2 = 0
-    WHERE Tokens.deviceId = deviceId_;
+  DECLARE deviceId_ char(255);
+  UPDATE device_states
+  SET device_states.state = 'logged_out'
+  WHERE device_states.sessionID = sessionID_;
+  SELECT deviceId INTO deviceId_ FROM device_states
+  WHERE device_states.sessionID = sessionID_;
+  UPDATE Tokens
+  SET Tokens.token1 = 0 AND Tokens.token2 = 0
+  WHERE Tokens.deviceId = deviceId_;
 END ;;
 DELIMITER ;
 /*!50003 SET sql_mode              = @saved_sql_mode */ ;
@@ -974,7 +974,7 @@ DELIMITER ;
 DELIMITER ;;
 CREATE DEFINER=`root`@`localhost` PROCEDURE `register_voucher`(IN voucher_ char(255))
 BEGIN
-    UPDATE login_.voucher_states
+  UPDATE login_.voucher_states
     SET login_.voucher_states.state = 'registered'
     WHERE login_.voucher_states.voucher_ = voucher_
       AND login_.voucher_states.state = 'processing';
@@ -996,12 +996,12 @@ DELIMITER ;
 DELIMITER ;;
 CREATE DEFINER=`root`@`localhost` PROCEDURE `reset_voucher`(IN voucher_ char(255), IN user_ char(255))
 BEGIN
-    UPDATE login_.voucher_states
+  UPDATE login_.voucher_states
     SET login_.voucher_states.state = 'free'
     WHERE login_.voucher_states.voucher_ = voucher_
       AND (login_.voucher_states.state = 'registered' OR login_.voucher_states.state = 'processing');
-    DELETE FROM login_.logins WHERE login_.logins.user = user_;
-    DELETE FROM login_.vouchers WHERE login_.vouchers.voucher_ = voucher_;
+  DELETE FROM login_.logins WHERE login_.logins.user = user_;
+  DELETE FROM login_.vouchers WHERE login_.vouchers.voucher_ = voucher_;
 END ;;
 DELIMITER ;
 /*!50003 SET sql_mode              = @saved_sql_mode */ ;
@@ -1020,7 +1020,7 @@ DELIMITER ;
 DELIMITER ;;
 CREATE DEFINER=`root`@`localhost` PROCEDURE `set_voucher`(IN voucher_ char(255))
 BEGIN
-    UPDATE login_.voucher_states
+  UPDATE login_.voucher_states
     SET login_.voucher_states.state = 'processing'
     WHERE login_.voucher_states.voucher_ = voucher_
       AND login_.voucher_states.state = 'free';
@@ -1042,10 +1042,10 @@ DELIMITER ;
 DELIMITER ;;
 CREATE DEFINER=`root`@`localhost` PROCEDURE `update_password`(IN pass_ char(255), IN email_ char(255))
 BEGIN
-    DECLARE id_ int;
-    SELECT id INTO id_ FROM login_.logins WHERE login_.logins.email = email_;
-    UPDATE login_.logins SET login_.logins.hash_ = pass_ WHERE login_.logins.id = id_;
-    UPDATE login_.forgotPsw SET login_.forgotPsw.isValid = 0 WHERE login_.forgotPsw.forgotUserEmail = email_;
+  DECLARE id_ int;
+  SELECT id INTO id_ FROM login_.logins WHERE login_.logins.email = email_;
+  UPDATE login_.logins SET login_.logins.hash_ = pass_ WHERE login_.logins.id = id_;
+  UPDATE login_.forgotPsw SET login_.forgotPsw.isValid = 0 WHERE login_.forgotPsw.forgotUserEmail = email_;
 END ;;
 DELIMITER ;
 /*!50003 SET sql_mode              = @saved_sql_mode */ ;
