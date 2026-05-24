@@ -1,0 +1,14 @@
+mysql_8/login.sql
+  h_d154d11af00b83 42,51,69,78,104,107,110,112-167,181,184-187,226,229,232,242,246,249-252,316,325,366-389,392,395,398,411,415,418-421,507,529,538,1166
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.4.11",
+  "base_commit_sha": "d1c39488f239cd0c3c06badca2fd9bb6ecb81916",
+  "prompts": {},
+  "humans": {
+    "h_d154d11af00b83": {
+      "author": "GASPAR, GYORGY <gyorgy.gaspar@lhsystems.com>"
+    }
+  }
+}
