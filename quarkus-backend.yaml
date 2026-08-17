@@ -388,6 +388,33 @@ spec:
               value: "true"
             - name: QUARKUS_OTEL_EXPORTER_OTLP_ENDPOINT
               value: http://tempo:4317
+          volumeMounts:
+            - name: mbook-logs
+              mountPath: /work/log
+        - name: promtail
+          image: grafana/promtail:3.2.1
+          imagePullPolicy: IfNotPresent
+          args:
+            - -config.file=/etc/promtail/promtail.yaml
+            - -config.expand-env=true
+          env:
+            - name: SERVICE_NAME
+              value: mbook
+            - name: POD_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.name
+          volumeMounts:
+            - name: mbook-logs
+              mountPath: /work/log
+            - name: promtail-config
+              mountPath: /etc/promtail
+      volumes:
+        - name: mbook-logs
+          emptyDir: {}
+        - name: promtail-config
+          configMap:
+            name: promtail-config
 ---
 apiVersion: v1
 kind: Service
@@ -440,6 +467,33 @@ spec:
               value: "true"
             - name: QUARKUS_OTEL_EXPORTER_OTLP_ENDPOINT
               value: http://tempo:4317
+          volumeMounts:
+            - name: mbooks-logs
+              mountPath: /work/log
+        - name: promtail
+          image: grafana/promtail:3.2.1
+          imagePullPolicy: IfNotPresent
+          args:
+            - -config.file=/etc/promtail/promtail.yaml
+            - -config.expand-env=true
+          env:
+            - name: SERVICE_NAME
+              value: mbooks
+            - name: POD_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.name
+          volumeMounts:
+            - name: mbooks-logs
+              mountPath: /work/log
+            - name: promtail-config
+              mountPath: /etc/promtail
+      volumes:
+        - name: mbooks-logs
+          emptyDir: {}
+        - name: promtail-config
+          configMap:
+            name: promtail-config
 ---
 apiVersion: v1
 kind: Service
@@ -764,6 +818,147 @@ spec:
       port: 4318
       targetPort: 4318
 ---
+# ===================== promtail (log shipper for split files) =====================
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: promtail-config
+  namespace: cinemas
+data:
+  promtail.yaml: |
+    server:
+      http_listen_port: 9080
+      grpc_listen_port: 0
+
+    positions:
+      filename: /tmp/positions.yaml
+
+    clients:
+      - url: http://loki:3100/loki/api/v1/push
+
+    scrape_configs:
+      - job_name: split-file-logs
+        static_configs:
+          - targets: [localhost]
+            labels:
+              namespace: cinemas
+              service: ${SERVICE_NAME}
+              pod: ${POD_NAME}
+              __path__: /work/log/*.log
+        pipeline_stages:
+          - regex:
+              expression: '^(?P<timestamp>\\d{4}-\\d{2}-\\d{2} \\d{2}:\\d{2}:\\d{2},\\d{3})\\s+(?P<level>[A-Z]+)\\s+\\[(?P<logger>[^\\]]+)\\]\\s+-\\s+(?P<message>.*)$'
+          - labels:
+              level:
+              logger:
+---
+# ===================== loki (log backend) =====================
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: loki-config
+  namespace: cinemas
+data:
+  loki.yaml: |
+    auth_enabled: false
+
+    server:
+      http_listen_port: 3100
+
+    common:
+      instance_addr: 127.0.0.1
+      path_prefix: /loki
+      replication_factor: 1
+      ring:
+        kvstore:
+          store: inmemory
+
+    schema_config:
+      configs:
+        - from: 2024-01-01
+          store: tsdb
+          object_store: filesystem
+          schema: v13
+          index:
+            prefix: index_
+            period: 24h
+
+    storage_config:
+      tsdb_shipper:
+        active_index_directory: /loki/index
+        cache_location: /loki/index_cache
+        cache_ttl: 24h
+
+      filesystem:
+        directory: /loki/chunks
+
+    limits_config:
+      allow_structured_metadata: true
+      reject_old_samples: true
+      reject_old_samples_max_age: 168h
+
+    compactor:
+      working_directory: /loki/compactor
+      retention_enabled: true
+      delete_request_store: filesystem
+
+    table_manager:
+      retention_deletes_enabled: true
+      retention_period: 168h
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: loki
+  namespace: cinemas
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: loki
+  template:
+    metadata:
+      labels:
+        app: loki
+    spec:
+      containers:
+        - name: loki
+          image: grafana/loki:3.2.1
+          imagePullPolicy: IfNotPresent
+          args:
+            - -config.file=/etc/loki/loki.yaml
+          ports:
+            - containerPort: 3100
+          volumeMounts:
+            - name: loki-config
+              mountPath: /etc/loki
+            - name: loki-data
+              mountPath: /loki
+          readinessProbe:
+            httpGet:
+              path: /ready
+              port: 3100
+            initialDelaySeconds: 10
+            periodSeconds: 5
+      volumes:
+        - name: loki-config
+          configMap:
+            name: loki-config
+        - name: loki-data
+          emptyDir: {}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: loki
+  namespace: cinemas
+spec:
+  selector:
+    app: loki
+  ports:
+    - port: 3100
+      targetPort: 3100
+---
 # ===================== grafana dashboard provisioning =====================
 apiVersion: v1
 kind: ConfigMap
@@ -1069,11 +1264,17 @@ data:
         isDefault: false
         jsonData:
           tracesToLogsV2:
-            datasourceUid: ''
+            datasourceUid: loki
           nodeGraph:
             enabled: true
           serviceMap:
             datasourceUid: prometheus
+      - name: Loki
+        type: loki
+        uid: loki
+        access: proxy
+        url: http://loki:3100
+        isDefault: false
 ---
 apiVersion: apps/v1
 kind: Deployment

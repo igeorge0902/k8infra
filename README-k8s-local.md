@@ -275,7 +275,7 @@ Copy the repo `pictures/` content into the running pod:
 ```bash
 kubectl -n cinemas cp pictures/ \
   $(kubectl -n cinemas get pod -l app=simple-service-webapp \
-      -o jsonpath='{.items[0].metadata.name}'):/pictures/
+      -o jsonpath='{.items[0].metadata.name}'):/
 ```
 
 Alternatively, for local Minikube you can mount the host folder directly:
