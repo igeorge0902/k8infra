@@ -1,0 +1,26 @@
+quarkus-backend.yaml
+  s_e86605144d183c::t_401ab2699aad40 1267,1272-1277
+  s_e86605144d183c::t_1c93719bc9e92b 395-417,470-474,926
+  s_e86605144d183c::t_981006bbaa1547 821-925,927-961
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.4.11",
+  "base_commit_sha": "4a4cf93d2fb9cf0aa22264cd8e0d6544ad5343c1",
+  "prompts": {},
+  "humans": {
+    "h_d154d11af00b83": {
+      "author": "GASPAR, GYORGY <gyorgy.gaspar@lhsystems.com>"
+    }
+  },
+  "sessions": {
+    "s_e86605144d183c": {
+      "agent_id": {
+        "tool": "github-copilot-jetbrains",
+        "id": "1786968040017",
+        "model": "unknown"
+      },
+      "human_author": "GASPAR, GYORGY <gyorgy.gaspar@lhsystems.com>"
+    }
+  }
+}
