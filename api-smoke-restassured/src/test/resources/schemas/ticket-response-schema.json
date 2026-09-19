@@ -1,0 +1,146 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "required": [
+    "Amount",
+    "AuthCode",
+    "ResponseCode",
+    "ResponseText",
+    "Status",
+    "Success",
+    "TaxAmount",
+    "seatsforscreen",
+    "tickets"
+  ],
+  "properties": {
+    "Amount": {
+      "type": "number"
+    },
+    "AuthCode": {
+      "type": "string"
+    },
+    "ResponseCode": {
+      "type": "string"
+    },
+    "ResponseText": {
+      "type": "string"
+    },
+    "Status": {
+      "type": "string"
+    },
+    "Success": {
+      "type": "string"
+    },
+    "TaxAmount": {
+      "type": "string"
+    },
+    "seatsforscreen": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "isReserved",
+          "price",
+          "seatId",
+          "seatNumber",
+          "seatRow",
+          "tax"
+        ],
+        "properties": {
+          "isReserved": {
+            "type": "string"
+          },
+          "price": {
+            "type": "number"
+          },
+          "seatId": {
+            "type": "integer"
+          },
+          "seatNumber": {
+            "type": "string"
+          },
+          "seatRow": {
+            "type": "string"
+          },
+          "tax": {
+            "type": "number"
+          }
+        },
+        "additionalProperties": false
+      }
+    },
+    "tickets": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "movie_name",
+          "price",
+          "purchase",
+          "screen_screenId",
+          "seats_seatNumber",
+          "seats_seatRow",
+          "tax",
+          "ticketId"
+        ],
+        "properties": {
+          "movie_name": {
+            "type": "string"
+          },
+          "price": {
+            "type": "number"
+          },
+          "purchase": {
+            "type": "object",
+            "required": [
+              "orderId",
+              "purchaseId",
+              "ticket",
+              "ticketsForPurchase",
+              "time",
+              "uuid"
+            ],
+            "properties": {
+              "orderId": {
+                "type": "string"
+              },
+              "purchaseId": {
+                "type": "integer"
+              },
+              "ticket": {
+                "type": "array"
+              },
+              "ticketsForPurchase": {
+                "type": "array"
+              },
+              "time": {
+                "type": "string"
+              },
+              "uuid": {
+                "type": "string"
+              }
+            },
+            "additionalProperties": false
+          },
+          "screen_screenId": {
+            "type": "string"
+          },
+          "seats_seatNumber": {
+            "type": "string"
+          },
+          "seats_seatRow": {
+            "type": "string"
+          },
+          "tax": {
+            "type": "number"
+          },
+          "ticketId": {
+            "type": "integer"
+          }
+        },
+        "additionalProperties": false
+      }
+    }
+  },
+  "additionalProperties": false
+}

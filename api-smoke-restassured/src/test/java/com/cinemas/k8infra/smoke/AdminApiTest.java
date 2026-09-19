@@ -1,8 +1,8 @@
 package com.cinemas.k8infra.smoke;
 
-import com.cinemas.k8infra.smoke.support.LoginSession;
-import com.cinemas.k8infra.smoke.support.SmokeSupport;
-import com.cinemas.k8infra.smoke.support.SmokeTestConfig;
+import com.cinemas.k8infra.smoke.base.endpoint.BaseApiClient;
+import com.cinemas.k8infra.smoke.base.config.BaseTestConfig;
+import com.cinemas.k8infra.smoke.base.session.LoginSession;
 import io.restassured.response.Response;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -12,12 +12,12 @@ import java.util.Map;
 
 import static org.junit.jupiter.api.Assertions.*;
 
-class AdminApiSmokeTest {
-    private SmokeSupport support;
+class AdminApiTest {
+    private BaseApiClient support;
 
     @BeforeEach
     void setUp() {
-        support = new SmokeSupport(SmokeTestConfig.load());
+        support = new BaseApiClient(BaseTestConfig.load());
         support.assumeLiveBackend();
     }
 
@@ -43,7 +43,7 @@ class AdminApiSmokeTest {
         assertNotNull(sessions, "Active sessions must return JSON array");
 
         for (Map<String, Object> s : sessions) {
-            SmokeSupport.assertSessionShape(s);
+            BaseApiClient.assertSessionShape(s);
         }
 
         Response hello = support.getHello();

@@ -110,6 +110,13 @@ ensure_runtime() {
     else
       pass "colima is running"
     fi
+      local colima_socket="${HOME}/.colima/default/docker.sock"
+      if [[ -S "${colima_socket}" ]]; then
+          export DOCKER_HOST="unix://${colima_socket}"
+        pass "DOCKER_HOST configured for colima socket"
+      else
+        warn "colima socket not found at ${colima_socket}; Docker checks may fail"
+      fi
   else
     info "colima not installed; assuming another Docker runtime is available"
   fi
@@ -344,17 +351,33 @@ build_and_load_service() {
   local service="$1"
   local src_dir
   local image
+  local maven_settings_arg=()
+  local default_settings="${SCRIPT_DIR}/settings-local.xml"
+  local custom_settings="${MAVEN_SETTINGS_FILE:-}"
 
   src_dir="$(service_src_dir "${service}")" ||
     fail "Unsupported service for restart --build: ${service}"
 
   image="$(service_image "${service}")"
 
+  # Prefer explicit MAVEN_SETTINGS_FILE, else auto-use repo local settings-local.xml.
+  if [[ -n "${custom_settings}" ]]; then
+    if [[ -f "${custom_settings}" ]]; then
+      maven_settings_arg=(-s "${custom_settings}")
+      info "Using Maven settings: ${custom_settings}"
+    else
+      fail "MAVEN_SETTINGS_FILE does not exist: ${custom_settings}"
+    fi
+  elif [[ -f "${default_settings}" ]]; then
+    maven_settings_arg=(-s "${default_settings}")
+    info "Using Maven settings: ${default_settings}"
+  fi
+
   info "Packaging ${src_dir}"
 
   (
     cd "${REPO_ROOT}/${src_dir}"
-    ./mvnw package -DskipTests
+    ./mvnw "${maven_settings_arg[@]}" package -DskipTests
   )
 
   if command -v docker >/dev/null 2>&1; then
