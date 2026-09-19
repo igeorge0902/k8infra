@@ -1,0 +1,47 @@
+api-smoke-restassured/src/test/resources/smoke-test.properties
+  h_d154d11af00b83 23
+  s_d3e62066a83fcf::t_fbbcad717d201b 15-19
+api-smoke-restassured/pom.xml
+  s_6ce5e3eba2e986::t_f27c0b059aedc8 13
+  h_d154d11af00b83 16
+api-smoke-restassured/src/test/java/com/cinemas/k8infra/smoke/LoginApiTest.java
+  h_d154d11af00b83 3,16,20
+api-smoke-restassured/README.md
+  h_d154d11af00b83 14,39,58
+api-smoke-restassured/src/test/resources/schemas/ticket-response-schema.json
+  h_d154d11af00b83 1-146
+api-smoke-restassured/src/test/java/com/cinemas/k8infra/smoke/AdminApiTest.java
+  h_d154d11af00b83 1,3,6-8,10-11,13,15-16,18-21,24-26,28-30,32-38,40-43,45-46,48-51
+  s_6ce5e3eba2e986::t_0d9084cdaf4662 4-5
+k8s-orchestrator.sh
+  h_d154d11af00b83 354-356,363-375,380
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.4.11",
+  "base_commit_sha": "98b73a2fe7ba83713977918de3e185c5ba76e718",
+  "prompts": {},
+  "humans": {
+    "h_d154d11af00b83": {
+      "author": "GASPAR, GYORGY <gyorgy.gaspar@lhsystems.com>"
+    }
+  },
+  "sessions": {
+    "s_6ce5e3eba2e986": {
+      "agent_id": {
+        "tool": "github-copilot-jetbrains",
+        "id": "1788081052318",
+        "model": "unknown"
+      },
+      "human_author": "GASPAR, GYORGY <gyorgy.gaspar@lhsystems.com>"
+    },
+    "s_d3e62066a83fcf": {
+      "agent_id": {
+        "tool": "github-copilot-jetbrains",
+        "id": "1787388278853",
+        "model": "unknown"
+      },
+      "human_author": "GASPAR, GYORGY <gyorgy.gaspar@lhsystems.com>"
+    }
+  }
+}
