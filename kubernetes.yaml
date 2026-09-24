@@ -312,8 +312,6 @@ spec:
           ports:
             - containerPort: 8080
           env:
-            - name: DB_URL
-              value: jdbc:mysql://mysql:3306/login_
             - name: WILDFLY_URL
               value: http://apache
             - name: QUARKUS_DATASOURCE_DB_KIND
