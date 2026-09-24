@@ -1,0 +1,95 @@
+api-smoke-restassured/src/test/java/com/cinemas/k8infra/smoke/base/config/BaseTestConfig.java
+  s_6ce5e3eba2e986::t_5123c7d4926f11 135
+  s_6ce5e3eba2e986::t_61ccdc490ec156 132-134
+  h_d154d11af00b83 1-131
+api-smoke-restassured/src/test/java/com/cinemas/k8infra/smoke/base/endpoint/BaseApiClient.java
+  h_d154d11af00b83 1-204
+api-smoke-restassured/src/test/java/com/cinemas/k8infra/smoke/base/response/ResponseRuleProperties.java
+  s_6ce5e3eba2e986::t_3e5722190c24fd 1-45
+api-smoke-restassured/src/test/java/com/cinemas/k8infra/smoke/base/response/booking/BookingCheckoutResponseParser.java
+  s_6ce5e3eba2e986::t_3dfa02ab4f04c7 42
+  s_6ce5e3eba2e986::t_7bee690d578909 39-41
+  h_d154d11af00b83 1-38
+api-smoke-restassured/src/test/java/com/cinemas/k8infra/smoke/base/response/EndpointResponseModel.java
+  s_6ce5e3eba2e986::t_f4152d644c0448 75
+  s_6ce5e3eba2e986::t_bcc7e909fb703a 17-68
+  s_6ce5e3eba2e986::t_d6790cf1ddf5f6 14-16
+  s_6ce5e3eba2e986::t_7be9ac1c4f6e42 69-74
+  h_d154d11af00b83 1-13
+api-smoke-restassured/src/test/java/com/cinemas/k8infra/smoke/BookingConcurrentApiTest.java
+  s_6ce5e3eba2e986::t_b7b4431563b79f 3-4,6-11,86,89-92
+  h_d154d11af00b83 1-2,5,12-23,31-43,45-46,48-53,56-57,60-61,63-72,74-76,78-82,84-85,93,97,99-100,103-113,130-131,142-143,145-156,159-167
+  s_6ce5e3eba2e986::t_1f7d77eee60cbf 25,114
+  s_6ce5e3eba2e986::t_87a5c0b383d128 29-30,77,94-95,98,101-102,127-128,132-133,135-138,140-141
+  s_6ce5e3eba2e986::t_858d51e5f1672a 24,26-28,115-126,157-158
+  s_6ce5e3eba2e986::t_86b73cdfadcf9b 44,47,54-55,58-59,62,73,83,87-88,96,129,134,139,144
+api-smoke-restassured/CHECKOUT_CONTRACT.md
+  s_d3e62066a83fcf::t_82fed886300ace 88
+  s_d3e62066a83fcf::t_5cbf716aa7620b 1-87
+api-smoke-restassured/src/test/java/com/cinemas/k8infra/smoke/base/security/HmacSigner.java
+  s_6ce5e3eba2e986::t_42e439ee19f898 46
+  s_6ce5e3eba2e986::t_d5ed5596d15349 43-45
+  h_d154d11af00b83 1-42
+api-smoke-restassured/src/test/java/com/cinemas/k8infra/smoke/base/concurrency/TwoCallRaceRunner.java
+  s_6ce5e3eba2e986::t_67e9d80e08f5f1 42
+  s_6ce5e3eba2e986::t_3e37d057ca319e 39-41
+  h_d154d11af00b83 1-38
+api-smoke-restassured/src/test/java/com/cinemas/k8infra/smoke/base/session/LoginSession.java
+  s_6ce5e3eba2e986::t_575165f6012802 6
+  s_6ce5e3eba2e986::t_ae65aaa419d4a9 3-5
+  h_d154d11af00b83 1-2
+api-smoke-restassured/.mvn/maven.config
+  s_6ce5e3eba2e986::t_41123dda7b8104 2
+  s_6ce5e3eba2e986::t_76e6542774dd26 1
+api-smoke-restassured/src/test/java/com/cinemas/k8infra/smoke/base/response/EndpointResponseValidator.java
+  s_6ce5e3eba2e986::t_f1b5decc8ef379 38
+  s_6ce5e3eba2e986::t_9553eb0ed9ec0a 11-14
+  s_6ce5e3eba2e986::t_f642172866dbfb 8-10
+  s_6ce5e3eba2e986::t_eabd137413802c 15-17,35-37
+  h_d154d11af00b83 1-7,18-34
+api-smoke-restassured/src/test/resources/response-rules/booking-checkout-response.properties
+  s_6ce5e3eba2e986::t_088cd9567a4027 9
+  s_6ce5e3eba2e986::t_6f8227fdbf6255 2-8
+  s_6ce5e3eba2e986::t_3bed43c881ec67 1
+api-smoke-restassured/src/test/java/com/cinemas/k8infra/smoke/base/session/LoginPayload.java
+  s_6ce5e3eba2e986::t_e5383b2aba0c64 1-6
+api-smoke-restassured/src/test/java/com/cinemas/k8infra/smoke/base/response/EndpointBodyResponseRules.java
+  s_6ce5e3eba2e986::t_cd6c50e5e7a6d1 12-23
+  s_6ce5e3eba2e986::t_26180c948645f1 9-11
+  s_6ce5e3eba2e986::t_9ef69ce5ca11ca 24-26
+  h_d154d11af00b83 1-8,27-29
+api-smoke-restassured/src/test/java/com/cinemas/k8infra/smoke/base/response/booking/BookingCheckoutResponseRules.java
+  s_6ce5e3eba2e986::t_054b93d1f2052d 26
+  s_6ce5e3eba2e986::t_efe55b104932cf 3-22
+  s_6ce5e3eba2e986::t_03e113abfbf447 1-2
+  s_6ce5e3eba2e986::t_629a752efbd195 23-25
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.4",
+  "base_commit_sha": "f3046e0487745f8a2ca95318660f5a674972372b",
+  "prompts": {},
+  "humans": {
+    "h_d154d11af00b83": {
+      "author": "GASPAR, GYORGY <gyorgy.gaspar@lhsystems.com>"
+    }
+  },
+  "sessions": {
+    "s_6ce5e3eba2e986": {
+      "agent_id": {
+        "tool": "github-copilot-jetbrains",
+        "id": "1788081052318",
+        "model": "unknown"
+      },
+      "human_author": "GASPAR, GYORGY <gyorgy.gaspar@lhsystems.com>"
+    },
+    "s_d3e62066a83fcf": {
+      "agent_id": {
+        "tool": "github-copilot-jetbrains",
+        "id": "1787388278853",
+        "model": "unknown"
+      },
+      "human_author": "GASPAR, GYORGY <gyorgy.gaspar@lhsystems.com>"
+    }
+  }
+}
